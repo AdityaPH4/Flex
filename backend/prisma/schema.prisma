@@ -1,0 +1,190 @@
+// TOIT Employee Benefits - database schema
+// Postgres + Prisma
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// A position/designation. Monthly allowance is driven by role, per the product spec
+// ("the exact allowance should come from the database, NOT be hardcoded").
+model Role {
+  id              String     @id @default(uuid())
+  name            String     @unique // e.g. "Crew", "Shift Lead", "Manager"
+  monthlyAllowance Int       // in paise/rupees (integer, smallest currency unit - see MONEY note below)
+  employees       Employee[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model Outlet {
+  id      String @id @default(uuid())
+  name    String
+  address String?
+
+  transactions BenefitTransaction[]
+  employees    Employee[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model Employee {
+  id           String   @id @default(uuid())
+  employeeCode String   @unique // e.g. "EMP00123" - display only, never used to authenticate
+  name         String
+  phone        String   @unique // used for OTP login
+  photoUrl     String?
+  designation  String?  // free-text label shown in UI (may differ from Role.name)
+  department   String?
+
+  roleId String
+  role   Role   @relation(fields: [roleId], references: [id])
+
+  homeOutletId String?
+  homeOutlet   Outlet? @relation(fields: [homeOutletId], references: [id])
+
+  active Boolean @default(true)
+
+  sessions            Session[]
+  otpRequests         OtpRequest[]
+  benefitPeriods      BenefitPeriod[]
+  transactions        BenefitTransaction[]
+  reconciliationCodes ReconciliationCode[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([phone])
+}
+
+// One-time-passcode requests for phone login.
+model OtpRequest {
+  id         String   @id @default(uuid())
+  phone      String
+  codeHash   String // never store the raw OTP
+  employeeId String?
+  employee   Employee? @relation(fields: [employeeId], references: [id])
+
+  attempts   Int      @default(0)
+  expiresAt  DateTime
+  consumedAt DateTime?
+  createdAt  DateTime @default(now())
+
+  @@index([phone, createdAt])
+}
+
+// A logged-in device/session. Sessions are bound to a device id so a stolen JWT
+// alone is less useful, and so a specific device can be revoked (lost phone, offboarding).
+model Session {
+  id         String   @id @default(uuid())
+  employeeId String
+  employee   Employee @relation(fields: [employeeId], references: [id])
+
+  deviceId   String // client-generated stable device identifier
+  deviceName String?
+
+  createdAt  DateTime  @default(now())
+  lastSeenAt DateTime  @default(now())
+  revokedAt  DateTime?
+
+  @@index([employeeId])
+  @@index([deviceId])
+}
+
+// One calendar-month benefit window for one employee.
+// "used" is a maintained running total (updated atomically alongside each
+// BenefitTransaction insert) so balance checks don't require summing the
+// ledger on every request. BenefitTransaction rows remain the source of truth
+// for history/audit; used must always equal sum(transactions.amount) for the period.
+model BenefitPeriod {
+  id         String   @id @default(uuid())
+  employeeId String
+  employee   Employee @relation(fields: [employeeId], references: [id])
+
+  year  Int
+  month Int // 1-12
+
+  allowance Int // snapshotted from Role.monthlyAllowance at period-creation time
+  used      Int @default(0)
+
+  transactions BenefitTransaction[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([employeeId, year, month])
+}
+
+model BenefitTransaction {
+  id         String   @id @default(uuid())
+  employeeId String
+  employee   Employee @relation(fields: [employeeId], references: [id])
+
+  periodId String
+  period   BenefitPeriod @relation(fields: [periodId], references: [id])
+
+  outletId String?
+  outlet   Outlet? @relation(fields: [outletId], references: [id])
+  outletName String? // fallback free-text if outlet isn't a system record yet
+
+  amount     Int // rupees, integer
+  items      Json? // [{ name, amount }] - simple, no separate line-item table needed for MVP
+  occurredAt DateTime @default(now())
+  notes      String?
+
+  status String @default("confirmed") // confirmed | void
+
+  idempotencyKey String @unique // client-generated, prevents duplicate submission on retry
+
+  createdAt DateTime @default(now())
+
+  @@index([employeeId, occurredAt])
+  @@index([periodId])
+}
+
+// A short, human-typeable reference code for the Digitory hand-off flow.
+//
+// IMPORTANT: this is NOT an authentication or authorization mechanism. Our
+// backend never verifies it, never "redeems" it, and Digitory never calls us.
+// The actual payment/service happens entirely inside Digitory once the
+// cashier types this code in there. All this record does is let TOIT later
+// answer "which employee did Digitory transaction X belong to?" by matching
+// this code against Digitory's own exported records (a manual reconciliation
+// step - e.g. via `npx prisma studio` or a plain SQL query against this
+// table; no reconciliation tooling is built here since none was requested).
+//
+// employeeName/employeeCode are stored as a snapshot at generation time
+// (not just via the employeeId relation) so reconciliation stays accurate
+// even if the employee's details change or the employee record is later
+// deactivated.
+model ReconciliationCode {
+  id         String   @id @default(uuid())
+  code       String   @unique // short numeric code, read aloud and typed into Digitory
+  employeeId String
+  employee   Employee @relation(fields: [employeeId], references: [id])
+
+  employeeName String
+  employeeCode String
+
+  context String @default("Benefit redemption") // what this code was generated for
+
+  expiresAt DateTime // informational only - not enforced against anything, since nothing verifies this code
+  createdAt DateTime @default(now())
+
+  @@index([employeeId])
+  @@index([createdAt])
+}
+
+// Generic idempotency store for any mutating endpoint that needs replay-safety
+// beyond the transaction table's own idempotencyKey unique constraint.
+model IdempotencyKey {
+  key        String   @id
+  responseJson String
+  createdAt  DateTime @default(now())
+}

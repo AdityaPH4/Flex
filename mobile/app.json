@@ -1,0 +1,38 @@
+{
+  "expo": {
+    "name": "TOIT Benefits",
+    "slug": "toit-benefits",
+    "scheme": "toitbenefits",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "userInterfaceStyle": "dark",
+    "backgroundColor": "#111010",
+    "newArchEnabled": true,
+    "splash": {
+      "backgroundColor": "#111010"
+    },
+    "ios": {
+      "supportsTablet": false,
+      "bundleIdentifier": "com.toit.benefits"
+    },
+    "android": {
+      "package": "com.toit.benefits",
+      "adaptiveIcon": {
+        "backgroundColor": "#111010"
+      }
+    },
+    "plugins": [
+      "expo-router",
+      "expo-secure-store",
+      [
+        "expo-splash-screen",
+        {
+          "backgroundColor": "#111010"
+        }
+      ]
+    ],
+    "experiments": {
+      "typedRoutes": true
+    }
+  }
+}

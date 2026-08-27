@@ -1,0 +1,27 @@
+# Note: this maps Postgres to host port 5433, not the default 5432. If you
+# already have a native/Homebrew/Postgres.app install running locally, it's
+# almost certainly already using 5432 - reusing that port here would make
+# your Mac silently route connections to your OTHER Postgres instead of this
+# container, causing confusing "access denied" errors that have nothing to do
+# with this project. 5433 avoids that collision. DATABASE_URL in .env.example
+# already matches this.
+services:
+  db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: toit
+      POSTGRES_PASSWORD: toit
+      POSTGRES_DB: toit_benefits
+    ports:
+      - "5433:5432"
+    volumes:
+      - toit_pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U toit -d toit_benefits"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+volumes:
+  toit_pgdata:

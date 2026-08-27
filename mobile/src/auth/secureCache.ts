@@ -1,0 +1,87 @@
+import * as SecureStore from "expo-secure-store";
+import * as Crypto from "expo-crypto";
+
+const KEYS = {
+  sessionToken: "toit.sessionToken",
+  deviceId: "toit.deviceId",
+  identityCache: "toit.identityCache",
+};
+
+export interface CachedIdentity {
+  employeeId: string;
+  employeeCode: string;
+  name: string;
+  photoUrl: string | null;
+  cachedAt: string; // ISO timestamp - shown in the UI as "last synced"
+}
+
+// --- session token -----------------------------------------------------
+
+export async function saveSessionToken(token: string) {
+  await SecureStore.setItemAsync(KEYS.sessionToken, token);
+}
+
+export async function loadSessionToken(): Promise<string | null> {
+  return SecureStore.getItemAsync(KEYS.sessionToken);
+}
+
+export async function clearSessionToken() {
+  await SecureStore.deleteItemAsync(KEYS.sessionToken);
+}
+
+// --- device id -----------------------------------------------------------
+// Generated once per install and persisted. Sent to the backend at login so
+// the server can bind the session to a device (see Session.deviceId) -
+// useful for "sign out this device" / lost-phone flows later.
+
+export async function getOrCreateDeviceId(): Promise<string> {
+  const existing = await SecureStore.getItemAsync(KEYS.deviceId);
+  if (existing) return existing;
+  const bytes = await Crypto.getRandomBytesAsync(16);
+  const id = Array.from(bytes)
+    .map((b) => b.toString(16).padStart(2, "0"))
+    .join("");
+  await SecureStore.setItemAsync(KEYS.deviceId, id);
+  return id;
+}
+
+// --- offline identity cache ----------------------------------------------
+//
+// Deliberately minimal: name + employee code only, never balance or
+// transaction data (those stay online-only per product spec). Written ONLY
+// from a successful authenticated /api/me response - never constructed from
+// anything the user can type - so there's no path for someone to edit their
+// own cached identity into a different employee's.
+//
+// SecureStore backs onto iOS Keychain / Android Keystore, so the value is
+// encrypted at rest by the OS. That protects against another app or a casual
+// file-system snoop reading it. It does NOT protect against a fully rooted/
+// jailbroken device where the OS-level guarantees themselves are compromised -
+// closing that gap would need the backend to cryptographically sign the
+// cached payload and the app to verify that signature offline. That's a
+// reasonable V2 hardening step if TOIT wants defense-in-depth beyond OS
+// storage security; the MVP relies on OS-level encryption + strict write-path
+// discipline instead of implementing signing.
+
+export async function saveIdentityCache(identity: Omit<CachedIdentity, "cachedAt">) {
+  const payload: CachedIdentity = { ...identity, cachedAt: new Date().toISOString() };
+  await SecureStore.setItemAsync(KEYS.identityCache, JSON.stringify(payload));
+}
+
+export async function loadIdentityCache(): Promise<CachedIdentity | null> {
+  const raw = await SecureStore.getItemAsync(KEYS.identityCache);
+  if (!raw) return null;
+  try {
+    return JSON.parse(raw) as CachedIdentity;
+  } catch {
+    return null;
+  }
+}
+
+export async function clearIdentityCache() {
+  await SecureStore.deleteItemAsync(KEYS.identityCache);
+}
+
+export async function clearAllAuthData() {
+  await Promise.all([clearSessionToken(), clearIdentityCache()]);
+}
