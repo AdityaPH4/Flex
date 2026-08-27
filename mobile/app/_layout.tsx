@@ -44,7 +44,6 @@ export default function RootLayout() {
         <Stack screenOptions={{ headerShown: false, contentStyle: { backgroundColor: colors.bg } }}>
           <Stack.Screen name="(tabs)" />
           <Stack.Screen name="login" />
-          <Stack.Screen name="verify" />
           <Stack.Screen name="record-benefit" options={{ presentation: "modal" }} />
         </Stack>
       </AuthProvider>

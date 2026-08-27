@@ -38,7 +38,8 @@ model Employee {
   id           String   @id @default(uuid())
   employeeCode String   @unique // e.g. "EMP00123" - display only, never used to authenticate
   name         String
-  phone        String   @unique // used for OTP login
+  email        String   @unique // used for Google Sign-In login - must match the employee's Google account
+  phone        String?  // optional HR contact info only - not used for login
   photoUrl     String?
   designation  String?  // free-text label shown in UI (may differ from Role.name)
   department   String?
@@ -52,31 +53,12 @@ model Employee {
   active Boolean @default(true)
 
   sessions            Session[]
-  otpRequests         OtpRequest[]
   benefitPeriods      BenefitPeriod[]
   transactions        BenefitTransaction[]
   reconciliationCodes ReconciliationCode[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
-
-  @@index([phone])
-}
-
-// One-time-passcode requests for phone login.
-model OtpRequest {
-  id         String   @id @default(uuid())
-  phone      String
-  codeHash   String // never store the raw OTP
-  employeeId String?
-  employee   Employee? @relation(fields: [employeeId], references: [id])
-
-  attempts   Int      @default(0)
-  expiresAt  DateTime
-  consumedAt DateTime?
-  createdAt  DateTime @default(now())
-
-  @@index([phone, createdAt])
 }
 
 // A logged-in device/session. Sessions are bound to a device id so a stolen JWT

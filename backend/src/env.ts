@@ -10,9 +10,13 @@ export const env = {
   databaseUrl: required("DATABASE_URL"),
   jwtSecret: required("JWT_SECRET"),
   sessionTtlDays: Number(process.env.SESSION_TTL_DAYS ?? 30),
-  otpTtlSeconds: Number(process.env.OTP_TTL_SECONDS ?? 300),
   reconciliationCodeTtlSeconds: Number(process.env.RECONCILIATION_CODE_TTL_SECONDS ?? 300),
-  smsProvider: process.env.SMS_PROVIDER ?? "console",
+
+  // Google Sign-In: the "Web application" OAuth client ID from Google Cloud
+  // Console (not the Android client) - used as the audience when verifying
+  // ID tokens from the mobile app. See lib/googleAuth.ts.
+  googleClientId: required("GOOGLE_CLIENT_ID"),
+
   port: Number(process.env.PORT ?? 4000),
 
   // Admin dashboard: a single shared password for now (see README - this is

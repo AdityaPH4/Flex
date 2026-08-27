@@ -1,5 +1,5 @@
 import React, { useState } from "react";
-import { View, Text, TextInput, StyleSheet, KeyboardAvoidingView, Platform } from "react-native";
+import { View, Text, StyleSheet } from "react-native";
 import { useRouter } from "expo-router";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { useAuth } from "@/auth/AuthContext";
@@ -9,25 +9,23 @@ import { colors, spacing, type as t } from "@/theme/tokens";
 
 export default function LoginScreen() {
   const router = useRouter();
-  const { requestOtp } = useAuth();
-  const [phone, setPhone] = useState("+91");
+  const { signInWithGoogle } = useAuth();
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const onContinue = async () => {
+  const onSignIn = async () => {
     setError(null);
     setLoading(true);
     try {
-      const { requestId, expiresInSeconds } = await requestOtp(phone.trim());
-      router.push({
-        pathname: "/verify",
-        params: { requestId, phone: phone.trim(), expiresInSeconds: String(expiresInSeconds) },
-      });
+      await signInWithGoogle();
+      router.replace("/(tabs)/home");
     } catch (err) {
-      if (err instanceof ApiError && err.code === "phone_not_registered") {
-        setError("This number isn't registered as a TOIT employee. Check with HR if this seems wrong.");
+      if (err instanceof ApiError && err.code === "google_account_not_registered") {
+        setError("This Google account isn't registered as a TOIT employee. Check with HR if this seems wrong.");
+      } else if (err instanceof Error && err.message === "google_sign_in_cancelled") {
+        // Person closed the sign-in sheet - not an error worth showing.
       } else {
-        setError("Couldn't reach the server. Check your connection and try again.");
+        setError("Couldn't sign in. Check your connection and try again.");
       }
     } finally {
       setLoading(false);
@@ -36,46 +34,25 @@ export default function LoginScreen() {
 
   return (
     <SafeAreaView style={styles.screen}>
-      <KeyboardAvoidingView
-        behavior={Platform.OS === "ios" ? "padding" : undefined}
-        style={styles.flex}
-      >
-        <View style={styles.content}>
-          <View>
-            <Text style={styles.eyebrow}>TOIT EMPLOYEE BENEFITS</Text>
-            <Text style={styles.title}>Sign in with your phone</Text>
-            <Text style={styles.subtitle}>
-              We'll text a one-time code to verify it's really you.
-            </Text>
+      <View style={styles.content}>
+        <View>
+          <Text style={styles.eyebrow}>TOIT EMPLOYEE BENEFITS</Text>
+          <Text style={styles.title}>Sign in</Text>
+          <Text style={styles.subtitle}>
+            Use the Google account registered with HR to see your benefits.
+          </Text>
 
-            <TextInput
-              value={phone}
-              onChangeText={setPhone}
-              placeholder="+91 90000 00000"
-              placeholderTextColor={colors.textMuted}
-              keyboardType="phone-pad"
-              autoFocus
-              style={styles.input}
-            />
-
-            {error ? <Text style={styles.error}>{error}</Text> : null}
-          </View>
-
-          <PrimaryButton
-            label="Send code"
-            onPress={onContinue}
-            loading={loading}
-            disabled={phone.trim().length < 8}
-          />
+          {error ? <Text style={styles.error}>{error}</Text> : null}
         </View>
-      </KeyboardAvoidingView>
+
+        <PrimaryButton label="Sign in with Google" onPress={onSignIn} loading={loading} />
+      </View>
     </SafeAreaView>
   );
 }
 
 const styles = StyleSheet.create({
   screen: { flex: 1, backgroundColor: colors.bg },
-  flex: { flex: 1 },
   content: {
     flex: 1,
     justifyContent: "space-between",
@@ -96,17 +73,6 @@ const styles = StyleSheet.create({
     ...t.body,
     color: colors.textSecondary,
     marginBottom: spacing.xl,
-  },
-  input: {
-    ...t.body,
-    color: colors.textPrimary,
-    backgroundColor: colors.card,
-    borderWidth: 1,
-    borderColor: colors.cardBorder,
-    borderRadius: 16,
-    paddingHorizontal: spacing.lg,
-    paddingVertical: spacing.lg,
-    fontSize: 17,
   },
   error: {
     ...t.caption,

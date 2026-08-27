@@ -28,7 +28,7 @@ export default function ProfileScreen() {
   const photoUrl = profile?.photoUrl ?? cachedIdentity?.photoUrl ?? null;
 
   const confirmLogout = () => {
-    Alert.alert("Sign out?", "You'll need to verify your phone again to sign back in.", [
+    Alert.alert("Sign out?", "You'll need to sign in with Google again to sign back in.", [
       { text: "Cancel", style: "cancel" },
       {
         text: "Sign out",

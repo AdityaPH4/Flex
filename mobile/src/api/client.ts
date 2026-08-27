@@ -46,14 +46,8 @@ async function request<T>(
 }
 
 export const api = {
-  requestOtp: (phone: string) =>
-    request<{ requestId: string; expiresInSeconds: number }>("/auth/otp/request", {
-      method: "POST",
-      body: { phone },
-    }),
-
-  verifyOtp: (params: { requestId: string; code: string; deviceId: string; deviceName?: string }) =>
-    request<{ token: string; sessionExpiresInDays: number }>("/auth/otp/verify", {
+  googleSignIn: (params: { idToken: string; deviceId: string; deviceName?: string }) =>
+    request<{ token: string; sessionExpiresInDays: number }>("/auth/google/verify", {
       method: "POST",
       body: params,
     }),

@@ -24,15 +24,25 @@
     "plugins": [
       "expo-router",
       "expo-secure-store",
+      "@react-native-google-signin/google-signin",
       [
         "expo-splash-screen",
         {
-          "backgroundColor": "#111010"
+          "backgroundColor": "#111010",
+          "image": "./assets/splash-icon.png",
+          "imageWidth": 200
         }
       ]
     ],
     "experiments": {
       "typedRoutes": true
-    }
+    },
+    "extra": {
+      "router": {},
+      "eas": {
+        "projectId": "74725058-2f1b-41f7-88ea-348586a34794"
+      }
+    },
+    "owner": "adiph4"
   }
 }

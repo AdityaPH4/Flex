@@ -1,4 +1,5 @@
 import React, { createContext, useContext, useEffect, useState, useCallback } from "react";
+import { GoogleSignin, isSuccessResponse } from "@react-native-google-signin/google-signin";
 import { api, setAuthToken, ApiError } from "../api/client";
 import type { EmployeeProfile } from "../api/types";
 import {
@@ -11,13 +12,16 @@ import {
   type CachedIdentity,
 } from "./secureCache";
 
+GoogleSignin.configure({
+  webClientId: process.env.EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID,
+});
+
 interface AuthState {
   isBootstrapping: boolean; // still checking for an existing session on app start
   isAuthenticated: boolean;
   profile: EmployeeProfile | null;
   cachedIdentity: CachedIdentity | null; // available even offline
-  requestOtp: (phone: string) => Promise<{ requestId: string; expiresInSeconds: number }>;
-  verifyOtp: (requestId: string, code: string) => Promise<void>;
+  signInWithGoogle: () => Promise<void>;
   logout: () => Promise<void>;
   refreshProfile: () => Promise<void>;
 }
@@ -66,13 +70,15 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     })();
   }, []);
 
-  const requestOtp = useCallback(async (phone: string) => {
-    return api.requestOtp(phone);
-  }, []);
+  const signInWithGoogle = useCallback(async () => {
+    await GoogleSignin.hasPlayServices();
+    const response = await GoogleSignin.signIn();
+    if (!isSuccessResponse(response) || !response.data.idToken) {
+      throw new Error("google_sign_in_cancelled");
+    }
 
-  const verifyOtp = useCallback(async (requestId: string, code: string) => {
     const deviceId = await getOrCreateDeviceId();
-    const { token } = await api.verifyOtp({ requestId, code, deviceId });
+    const { token } = await api.googleSignIn({ idToken: response.data.idToken, deviceId });
     await saveSessionToken(token);
     setAuthToken(token);
 
@@ -102,6 +108,14 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       // the person asked to sign out and the device shouldn't keep showing
       // their data regardless of connectivity.
     }
+    try {
+      // Clears the native Google session too, so a future sign-in on this
+      // device shows the account picker again instead of silently reusing
+      // whoever signed in last (relevant if the phone changes hands).
+      await GoogleSignin.signOut();
+    } catch {
+      // best-effort
+    }
     await clearAllAuthData();
     setAuthToken(null);
     setIsAuthenticated(false);
@@ -127,8 +141,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         isAuthenticated,
         profile,
         cachedIdentity,
-        requestOtp,
-        verifyOtp,
+        signInWithGoogle,
         logout,
         refreshProfile,
       }}

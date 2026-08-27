@@ -58,34 +58,56 @@ it should show only Docker's process. If something else shows up there too,
 pick a different port in both `docker-compose.yml` and `.env`'s
 `DATABASE_URL` and keep them in sync.
 
-The seed script creates employee `EMP00123` / Rahul Sharma with phone
-`+919900000123`. Because `SMS_PROVIDER=console` in dev, OTP codes print
-straight to this terminal instead of being texted anywhere - watch this
-console when you log in from the app.
+The seed script creates employee `EMP00123` / Rahul Sharma. Before running
+`npm run seed`, edit `backend/src/seed.ts` and replace the placeholder email
+addresses with real Gmail addresses you (and anyone else testing) can
+actually sign in with - Google Sign-In has no dev bypass, so whatever email
+is seeded is what you log in with on the phone.
+
+You'll also need a Google OAuth **Web application** client ID before login
+will work - see "Google Sign-In setup" below - and set it as
+`GOOGLE_CLIENT_ID` in `backend/.env`.
 
 ---
 
 ## 2. Run the mobile app
 
-**Requirements:** Node 20+, the free **Expo Go** app on your phone (App Store /
-Play Store), and your phone on the same Wi-Fi as your computer.
+**Requirements:** Node 20+, an [EAS](https://expo.dev) account (free), and
+your phone on the same Wi-Fi as your computer.
+
+Login uses Google Sign-In, which needs a native module - plain Expo Go can't
+load it, so you need a one-time **development build** instead. See "Google
+Sign-In setup" below for the Google Cloud Console steps first, then:
 
 ```bash
 cd mobile
 cp .env.example .env
 # Edit EXPO_PUBLIC_API_URL - see the comments in .env.example for which
 # value to use (localhost, 10.0.2.2, or your laptop's LAN IP)
+# Edit EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID - same value as the backend's
+# GOOGLE_CLIENT_ID (see "Google Sign-In setup" below)
 
 npm install
-npx expo start
+npm install -g eas-cli
+eas login
+eas build --profile development --platform android   # one-time, ~10-15 min
 ```
 
-Scan the QR code that prints in your terminal with the Expo Go app (iOS:
-just use the Camera app; Android: use the Expo Go app's scanner). The app
-loads instantly - no build step, no App Store, no signing.
+Once the build finishes, install the resulting `.apk` on your phone (EAS
+gives you a QR code / link to download it directly - no Play Store needed).
+From then on, run:
 
-**To log in:** enter `+919900000123`, hit send, then check the **backend
-terminal** for the printed OTP code and type it into the app.
+```bash
+npx expo start --dev-client
+```
+
+and open the installed app - it hot-reloads on JS changes exactly like Expo
+Go did. You only need to repeat the `eas build` step if you change native
+dependencies (e.g. the Google Sign-In plugin config), not for everyday code
+changes.
+
+**To log in:** tap "Sign in with Google" and choose the Google account that
+matches the email you seeded in `backend/src/seed.ts`.
 
 ### If it can't reach the backend
 This is almost always the `EXPO_PUBLIC_API_URL` value - your phone is a
@@ -94,13 +116,39 @@ perspective means "the phone itself", not your laptop. Use your laptop's LAN
 IP (e.g. `http://192.168.1.42:4000`), and make sure your phone and laptop are
 on the same network with no client-isolation/guest-network restrictions.
 
+## Google Sign-In setup
+
+Both the backend and mobile app need a Google OAuth **Web application**
+client ID (the same one, used server-side as the ID-token audience and
+client-side as `webClientId`) plus an **Android** client ID registered
+against this app so Google will actually issue tokens to it:
+
+1. Go to [console.cloud.google.com](https://console.cloud.google.com) and
+   create (or pick) a project.
+2. **APIs & Services → OAuth consent screen**: choose **External**, fill in
+   an app name (e.g. "TOIT Employee Benefits") and your support email. Leave
+   publishing status as **Testing** and add every pilot employee's Gmail
+   address under "Test users" - this avoids Google's app-verification review
+   process, which is fine for a small pilot (same tradeoff as the shared
+   admin password below).
+3. **APIs & Services → Credentials → Create Credentials → OAuth client ID**,
+   twice:
+   - **Web application** - no redirect URI needed. Copy this Client ID into
+     `GOOGLE_CLIENT_ID` (`backend/.env`) and
+     `EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID` (`mobile/.env`) - same value in both.
+   - **Android** - package name `com.toit.benefits`, and a SHA-1 certificate
+     fingerprint. Get the fingerprint for your EAS-managed development build
+     with `cd mobile && eas credentials` (choose Android → the development
+     profile → View/manage credentials).
+
 ---
 
 ## 3. Getting to an actual installable app (App Store / Play Store)
 
-Expo Go (above) is the fast loop for building and testing. To get a real
-`.ipa`/`.apk` you can install without Expo Go, or submit to the stores, use
-**EAS Build** - Expo's cloud build service:
+Section 2 above already has you building and installing a **development**
+build via EAS (needed for Google Sign-In's native module). Publishing to the
+stores uses the same **EAS Build** service, just with the production profile
+instead of `--profile development`:
 
 ```bash
 npm install -g eas-cli
@@ -132,12 +180,14 @@ needing EAS at all.
 ## How the Digitory hand-off flow works
 
 - **Login proves identity, not the employee code.** The app authenticates via
-  phone + OTP. After that, every API request carries a session token; the
-  backend derives *who's asking* from that token. There is no field anywhere
-  in the API where the client sends an employee ID or code as proof of
-  identity - `req.body.employeeId` is never trusted, only `req.auth.employeeId`
-  from the verified token (see `backend/src/middleware/auth.ts`). This part is
-  unchanged from the original design and has nothing to do with Digitory.
+  Google Sign-In: the mobile app gets a Google ID token, the backend verifies
+  it and looks up the employee by the verified email (`backend/src/lib/googleAuth.ts`).
+  After that, every API request carries a session token; the backend derives
+  *who's asking* from that token. There is no field anywhere in the API where
+  the client sends an employee ID or code as proof of identity -
+  `req.body.employeeId` is never trusted, only `req.auth.employeeId` from the
+  verified token (see `backend/src/middleware/auth.ts`). This part has
+  nothing to do with Digitory.
 - **The reference code is bookkeeping, not a security mechanism.** Tapping
   "Get Code" on the Benefits screen asks the backend to generate a short
   6-digit code and store it against the employee's ID and name, with a
@@ -180,9 +230,10 @@ needing EAS at all.
   nothing rejects a code after that time, since nothing verifies the code at
   all. If Digitory later exposes a real API contract, this is one of the
   first things worth tightening.
-- **SMS is console-only.** Wire up a real provider (Twilio, MSG91, etc.) in
-  `backend/src/lib/sms.ts` - the interface is already there, only the
-  `ConsoleSmsProvider` needs a sibling.
+- **No self-serve account linking.** An employee's Google account must match
+  the `email` HR/admin set on their record ahead of time - there's no flow
+  for an employee to register their own email, by design (internal,
+  admin-provisioned system, same model as the old phone-based login).
 - **Employee provisioning is manual/seed-only.** There's no admin UI yet to
   add employees, set roles/allowances, or upload photos - that's a natural V2
   (even a simple internal script or a thin admin panel).
@@ -233,8 +284,7 @@ Source: `backend/src/routes/admin.ts` (API) and `backend/public/admin/`
 
 | Method | Path | Auth | Purpose |
 |---|---|---|---|
-| POST | `/auth/otp/request` | - | Request an OTP for a registered phone (login) |
-| POST | `/auth/otp/verify` | - | Verify OTP, get a session token (login) |
+| POST | `/auth/google/verify` | - | Verify a Google ID token, get a session token (login) |
 | POST | `/auth/logout` | employee | Revoke the current session |
 | GET | `/api/me` | employee | Own profile |
 | GET | `/api/me/benefits/current` | employee | Current month allowance/used/remaining |
@@ -252,8 +302,8 @@ Source: `backend/src/routes/admin.ts` (API) and `backend/public/admin/`
 a completely separate token type; an employee's session token is never
 accepted on admin routes and vice versa.
 
-Note there are two different OTPs in this system, and they're unrelated:
-the **login OTP** (`/auth/otp/*`) verifies identity to sign in; the
-**reconciliation code** (`/api/me/benefits/reconciliation-code`) is only a
-reference number for Digitory and proves nothing on its own.
+Note: Digitory calls its own reconciliation field "OTP" too, but
+`/api/me/benefits/reconciliation-code` is unrelated to login - it's only a
+reference number for Digitory and proves nothing on its own. Login now goes
+through `/auth/google/verify` instead.
 # Flex

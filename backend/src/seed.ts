@@ -36,18 +36,34 @@ async function main() {
     update: {},
   });
 
+  // IMPORTANT: replace these with real Gmail addresses you (or a teammate)
+  // can actually sign in with. Google Sign-In has no dev bypass like the old
+  // console-printed OTP did - whatever email is seeded here is what you must
+  // sign in with on the phone to log in as this employee.
   const rahul = await prisma.employee.upsert({
     where: { employeeCode: "EMP00123" },
     create: {
       employeeCode: "EMP00123",
       name: "Rahul Sharma",
+      email: "aditya@ph4.in",
       phone: "+919900000123",
       designation: "Shift Lead",
       department: "Operations",
       roleId: shiftLead.id,
       homeOutletId: indiranagar.id,
     },
-    update: {},
+    // Re-running the seed script (e.g. after editing an email above) should
+    // actually apply the change to an already-existing row, not silently
+    // no-op - so this mirrors the create fields instead of being empty.
+    update: {
+      name: "Rahul Sharma",
+      email: "aditya@ph4.in",
+      phone: "+919900000123",
+      designation: "Shift Lead",
+      department: "Operations",
+      roleId: shiftLead.id,
+      homeOutletId: indiranagar.id,
+    },
   });
 
   await prisma.employee.upsert({
@@ -55,13 +71,22 @@ async function main() {
     create: {
       employeeCode: "EMP00991",
       name: "Anita Rao",
+      email: "replace-with-another-real-gmail@gmail.com",
       phone: "+919900000991",
       designation: "Manager",
       department: "Operations",
       roleId: manager.id,
       homeOutletId: koramangala.id,
     },
-    update: {},
+    update: {
+      name: "Anita Rao",
+      email: "replace-with-another-real-gmail@gmail.com",
+      phone: "+919900000991",
+      designation: "Manager",
+      department: "Operations",
+      roleId: manager.id,
+      homeOutletId: koramangala.id,
+    },
   });
 
   // A couple of sample transactions for Rahul so the app has something to show.
@@ -113,7 +138,7 @@ async function main() {
   });
 
   console.log("Seed complete.");
-  console.log("Try logging in as:", rahul.phone, "(OTP prints to this console)");
+  console.log("Sign in with Google as:", rahul.email);
 }
 
 main()

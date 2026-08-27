@@ -31,11 +31,21 @@ and things to be careful not to break.
    See `ReconciliationCode` model comment in `schema.prisma` and the
    "How the Digitory hand-off flow works" section of `README.md`.
 
-2. **There are two unrelated OTPs.** The login OTP (`/auth/otp/*`)
-   authenticates the employee into the app. The reconciliation code
-   (confusingly also sometimes called "OTP" by the person in conversation,
-   since that's what Digitory calls its own field) is the thing above. Don't
-   conflate them.
+2. **Login is Google Sign-In, not phone/OTP.** The original phone + SMS OTP
+   login (`/auth/otp/*`) was replaced with Google Sign-In
+   (`POST /auth/google/verify`) to avoid per-SMS cost and India's TRAI/DLT
+   registration requirement — an explicit decision by the person building
+   this, made because the rollout is Android-only (every Android phone
+   already needs a Google account for Play Store). `Employee.email` (unique)
+   is now the login identifier; `Employee.phone` still exists but is
+   optional, HR-contact-info only, and is never used to authenticate. There
+   is **no dev bypass** for Google Sign-In the way console-printed OTPs
+   worked — testing requires seeding a real Gmail address in `seed.ts` that
+   whoever is testing can actually sign in with. See
+   `backend/src/lib/googleAuth.ts` and `backend/src/routes/auth.ts`.
+   The Digitory reconciliation code (item 1 above) is unrelated to any of
+   this — Digitory calls its own field "OTP" too, which is a naming
+   coincidence, not a shared mechanism. Don't conflate them.
 
 3. **Balance enforcement is a single atomic SQL UPDATE**, not
    read-then-write. See `backend/src/lib/spend.ts`. This is intentional and
@@ -78,8 +88,12 @@ and things to be careful not to break.
 - They're following along via terminal copy-paste, not writing code
   themselves. When you give them commands to run, give complete, exact,
   copy-pasteable commands - don't assume familiarity with flags or shortcuts.
-- They're on a Mac, testing the mobile app on a physical Android phone via
-  Expo Go (not a simulator).
+- They're on a Mac, testing the mobile app on a physical Android phone.
+  Originally via plain Expo Go; since Google Sign-In needs a native module
+  Expo Go can't load, they now need a one-time **Expo dev-client build**
+  (`eas build --profile development --platform android`, install the
+  resulting `.apk`, then `npx expo start --dev-client`) — after that initial
+  install, JS changes still hot-reload the same way Expo Go did.
 - Their local Postgres runs via Docker on **port 5433, not 5432** (moved
   deliberately to avoid colliding with a native Postgres already on their
   machine) with credentials `postgres`/`postgres` (see `docker-compose.yml`
@@ -89,6 +103,7 @@ and things to be careful not to break.
   `prisma generate` will fail with a checksum/403 error - this is a sandbox
   limitation Claude previously hit repeatedly, not a real problem. On the
   person's actual Mac this resolves fine with normal internet access.
-- Seeded test employee for login: phone `+919900000123` (Rahul Sharma,
-  EMP00123). In dev, OTP codes print to the backend's console instead of
-  sending real SMS (`SMS_PROVIDER=console`).
+- Seeded test employee: Rahul Sharma, EMP00123 — `seed.ts` ships with a
+  placeholder Gmail (`replace-with-your-real-gmail@gmail.com`) that must be
+  edited to a real Gmail address before seeding, since that's what's used to
+  sign in (see item 2 above).
