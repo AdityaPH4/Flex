@@ -58,7 +58,7 @@ it should show only Docker's process. If something else shows up there too,
 pick a different port in both `docker-compose.yml` and `.env`'s
 `DATABASE_URL` and keep them in sync.
 
-The seed script creates employee `EMP00123` / Rahul Sharma. Before running
+The seed script creates employee `9001` / Rahul Sharma. Before running
 `npm run seed`, edit `backend/src/seed.ts` and replace the placeholder email
 addresses with real Gmail addresses you (and anyone else testing) can
 actually sign in with - Google Sign-In has no dev bypass, so whatever email
@@ -188,24 +188,28 @@ needing EAS at all.
   `req.body.employeeId` is never trusted, only `req.auth.employeeId` from the
   verified token (see `backend/src/middleware/auth.ts`). This part has
   nothing to do with Digitory.
-- **The reference code is bookkeeping, not a security mechanism.** Tapping
-  "Get Code" on the Benefits screen asks the backend to generate a short
-  6-digit code and store it against the employee's ID and name, with a
-  timestamp (`ReconciliationCode` table - see `backend/prisma/schema.prisma`).
-  The employee reads it aloud, the cashier types it into Digitory, and
+- **The reference code is bookkeeping at the checkout moment, not a security
+  mechanism.** Tapping "Get Code" on the Benefits screen asks the backend to
+  generate a short 6-digit code (unique within the calendar month it was
+  issued in, not globally - see `periodKey` on `ReconciliationCode`) and
+  store it against the employee's ID and name, with a timestamp. The
+  employee reads it aloud, the cashier types it into Digitory, and
   **Digitory processes the actual payment from there** - our backend never
-  calls Digitory and Digitory never calls us. This app does **not** verify,
-  consume, or authorize the code in any way; it's purely a record of "this
-  code was generated for this employee at this time," so TOIT can later match
-  a line in Digitory's own transaction export back to an employee. See the
+  calls Digitory and Digitory never calls us, and nothing verifies or
+  consumes the code in real time at the point of sale.
+- **Reconciling later IS automated, once Digitory's ledger carries this
+  code.** `POST /api/admin/reconcile` matches an admin-uploaded Digitory
+  ledger export against the `ReconciliationCode` table by code (scoped to
+  the month each ledger row's own date falls in) and "squares off" the
+  amount against the linked `BenefitTransaction` - a row is only reconciled
+  if both the code matches AND the amount agrees; a mismatch, an unlinked
+  code, or a code that isn't found at all is flagged into an "unreconciled"
+  bucket with a specific reason instead. The admin dashboard's Reconcile
+  page shows both as separate tabs. The real ledger sample on hand
+  (`data/Ledgers-7.csv`) doesn't have this code column yet - the column
+  name is guessed from candidates (`OTP_CANDIDATES` in
+  `backend/public/admin/app.js`) until a real sample confirms it. See the
   comment on the `ReconciliationCode` model for the full reasoning.
-- **Reconciling later is a manual step, on purpose.** Nothing here builds an
-  import/export tool, since none was asked for - use `npx prisma studio`
-  (or a plain SQL query) against the `ReconciliationCode` table to look up
-  which employee a given code belonged to. If TOIT later gets a real API
-  contract from Digitory (e.g. Digitory can push transaction data back to us,
-  or export a report we can ingest automatically), that's a contained
-  addition on top of this table, not a redesign.
 - **Balance enforcement (for the separate "Record Benefit" self-entry flow)
   still happens in one atomic SQL statement.** See `backend/src/lib/spend.ts`
   - the update `used = used + amount WHERE used + amount <= allowance` either
@@ -221,10 +225,11 @@ needing EAS at all.
 
 ## Known MVP simplifications (worth revisiting before real production use)
 
-- **Reconciling Digitory transactions to employees is manual.** We store the
-  code→employee mapping; matching it against Digitory's own records is a
-  human step (or a future automated import) - not built here since it wasn't
-  requested. See "How the Digitory hand-off flow works" above.
+- **Digitory's real ledger export doesn't have the code column yet.**
+  `POST /api/admin/reconcile` already does automated code+amount matching
+  (see "How the Digitory hand-off flow works" above), but it's only been
+  verified against hand-built test data - the actual column name and
+  format should be confirmed against a real export once Digitory adds it.
 - **The reference code has no real expiry enforcement.** `expiresAt` on
   `ReconciliationCode` is informational only (drives what the app displays);
   nothing rejects a code after that time, since nothing verifies the code at
@@ -296,6 +301,7 @@ Source: `backend/src/routes/admin.ts` (API) and `backend/public/admin/`
 | GET | `/api/admin/employees` | admin | Every active employee's current balance |
 | GET | `/api/admin/transactions` | admin | Every benefit transaction, paginated |
 | GET | `/api/admin/reconciliation-codes` | admin | Every Digitory reference code, paginated |
+| POST | `/api/admin/reconcile` | admin | Upload a Digitory ledger export, match by code, square off amounts |
 
 "employee" auth = `Authorization: Bearer <employee session token>`.
 "admin" auth = `Authorization: Bearer <admin token>` (from `/api/admin/login`) -

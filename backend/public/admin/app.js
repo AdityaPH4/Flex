@@ -5,7 +5,7 @@ function setToken(t) { localStorage.setItem(TOKEN_KEY, t); }
 function clearToken() { localStorage.removeItem(TOKEN_KEY); }
 
 function money(n) { return `₹${Number(n).toLocaleString("en-IN")}`; }
-function dateTime(iso) { return new Date(iso).toLocaleString("en-IN"); }
+function dateOnly(iso) { return iso ? String(iso).slice(0, 10) : "—"; }
 
 async function api(path, options = {}) {
   const res = await fetch(`/api/admin${path}`, {
@@ -21,7 +21,18 @@ async function api(path, options = {}) {
     showLogin();
     throw new Error("unauthorized");
   }
-  if (!res.ok) throw new Error(`request failed: ${res.status}`);
+  if (!res.ok) {
+    let body = null;
+    try {
+      body = await res.json();
+    } catch {
+      // response wasn't JSON - body stays null, caller falls back to a generic message
+    }
+    const err = new Error(body?.message || `request failed: ${res.status}`);
+    err.status = res.status;
+    err.body = body;
+    throw err;
+  }
   return res.json();
 }
 
@@ -42,10 +53,8 @@ function showLogin() {
 function showDashboard() {
   loginScreen.classList.add("hidden");
   dashboardScreen.classList.remove("hidden");
-  loadOverview();
   loadEmployees();
-  loadTransactions();
-  loadCodes();
+  loadRosterChanges();
 }
 
 // ---------------- Login ----------------
@@ -106,112 +115,227 @@ document.getElementById("sidebar-toggle").addEventListener("click", () => {
   sidebar.classList.toggle("open");
 });
 
-// ---------------- Overview ----------------
-
-async function loadOverview() {
-  const data = await api("/overview");
-  const cards = document.getElementById("overview-cards");
-  cards.innerHTML = `
-    <div class="card accent"><p class="label">Active employees</p><p class="value">${data.activeEmployeeCount}</p></div>
-    <div class="card accent"><p class="label">Total remaining</p><p class="value">${money(data.totals.remaining)}</p></div>
-    <div class="card"><p class="label">Total allowance</p><p class="value">${money(data.totals.allowance)}</p></div>
-    <div class="card"><p class="label">Total used</p><p class="value">${money(data.totals.used)}</p></div>
-  `;
-}
-
 // ---------------- Employees ----------------
+
+let allEmployees = [];
 
 async function loadEmployees() {
   const data = await api("/employees");
+  allEmployees = data.employees;
+  renderEmployees(allEmployees);
+}
+
+function renderEmployees(list) {
   const body = document.getElementById("employees-body");
   const empty = document.getElementById("employees-empty");
   body.innerHTML = "";
-  if (data.employees.length === 0) {
+  if (list.length === 0) {
     empty.classList.remove("hidden");
     return;
   }
   empty.classList.add("hidden");
-  for (const e of data.employees) {
+  for (const e of list) {
     const tr = document.createElement("tr");
     tr.innerHTML = `
-      <td>${escapeHtml(e.name)}</td><td>${escapeHtml(e.employeeCode)}</td><td>${escapeHtml(e.roleName)}</td>
-      <td>${escapeHtml(e.department ?? "—")}</td><td>${escapeHtml(e.homeOutlet ?? "—")}</td>
-      <td>${money(e.allowance)}</td><td>${money(e.used)}</td><td>${money(e.remaining)}</td>
+      <td>${escapeHtml(e.name)}</td>
+      <td>${escapeHtml(e.employeeCode)}</td>
+      <td>${escapeHtml(e.email ?? "—")}</td>
+      <td>${escapeHtml(e.phone || "—")}</td>
+      <td>${escapeHtml(e.roleName)}</td>
+      <td>${escapeHtml(e.homeOutlet ?? "—")}</td>
+      <td>${money(e.allowance)}</td>
+      <td>${e.walletLimit != null ? money(e.walletLimit) : "—"}</td>
+      <td>${e.otpEnabled ? "Yes" : "No"}</td>
+      <td>${dateOnly(e.walletValidFrom)}</td>
+      <td>${dateOnly(e.walletValidTo)}</td>
+      <td>${escapeHtml(e.grade || "—")}</td>
+      <td>${dateOnly(e.dateOfJoining)}</td>
+      <td>${money(e.used)}</td>
+      <td>${money(e.remaining)}</td>
     `;
     body.appendChild(tr);
   }
 }
 
-// ---------------- Transactions (paginated) ----------------
+document.getElementById("employees-search").addEventListener("input", (e) => {
+  const q = e.target.value.trim().toLowerCase();
+  renderEmployees(
+    q ? allEmployees.filter((emp) => emp.employeeCode.toLowerCase().includes(q)) : allEmployees
+  );
+});
 
-let transactionsCursor = null;
+// ---------------- Import / Export ----------------
 
-async function loadTransactions(append = false) {
-  const qs = transactionsCursor ? `?cursor=${transactionsCursor}` : "";
-  const data = await api(`/transactions${qs}`);
-  const body = document.getElementById("transactions-body");
-  const empty = document.getElementById("transactions-empty");
-  const loadMoreBtn = document.getElementById("transactions-load-more");
+document.getElementById("export-button").addEventListener("click", async () => {
+  const data = await api("/employees/export");
+  const csv = Papa.unparse(data.employees);
+  const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = `toit-employees-${new Date().toISOString().slice(0, 10)}.csv`;
+  a.click();
+  URL.revokeObjectURL(url);
+});
 
-  if (!append) body.innerHTML = "";
-  empty.classList.toggle("hidden", append || data.transactions.length > 0);
+let importRows = null;
 
-  for (const t of data.transactions) {
+const importFileInput = document.getElementById("import-file-input");
+const importFilenameLabel = document.getElementById("import-filename");
+const importRunButton = document.getElementById("import-run-button");
+const importError = document.getElementById("import-error");
+
+importFileInput.addEventListener("change", () => {
+  const file = importFileInput.files?.[0];
+  importError.classList.add("hidden");
+  importRunButton.disabled = true;
+  importRows = null;
+  if (!file) return;
+
+  importFilenameLabel.textContent = file.name;
+
+  Papa.parse(file, {
+    header: true,
+    skipEmptyLines: true,
+    complete: (result) => {
+      importRows = result.data;
+      if (importRows.length === 0) {
+        importError.textContent = "No rows found in this file.";
+        importError.classList.remove("hidden");
+        return;
+      }
+      importRunButton.disabled = false;
+    },
+    error: () => {
+      importError.textContent = "Couldn't read that file - make sure it's a valid CSV.";
+      importError.classList.remove("hidden");
+    },
+  });
+});
+
+importRunButton.addEventListener("click", async () => {
+  if (!importRows) return;
+  importError.classList.add("hidden");
+  importRunButton.disabled = true;
+  importRunButton.textContent = "Importing...";
+  try {
+    const data = await api("/employees/import", { method: "POST", body: JSON.stringify({ rows: importRows }) });
+    renderImportResults(data);
+    loadEmployees();
+    loadRosterChanges();
+  } catch (err) {
+    if (err.body?.error === "missing_required_fields") {
+      importError.textContent = formatMissingFieldsError(err.body.issues);
+    } else {
+      importError.textContent = "Import failed - check your connection and try again.";
+    }
+    importError.classList.remove("hidden");
+  } finally {
+    importRunButton.disabled = false;
+    importRunButton.innerHTML = '<i class="ti ti-upload"></i>Run Import';
+  }
+});
+
+// Groups per-field issues by row so "Row 5 is missing Grade, DOJ" reads as
+// one line instead of one line per missing field. Capped so a file with a
+// systematically-missing column (every row affected) doesn't dump hundreds
+// of lines into the banner - the first 20 rows already show the pattern.
+function formatMissingFieldsError(issues) {
+  const byRow = new Map();
+  for (const issue of issues) {
+    const label = issue.wallet_no ? `Row ${issue.row} (${issue.wallet_no})` : `Row ${issue.row}`;
+    if (!byRow.has(label)) byRow.set(label, []);
+    byRow.get(label).push(issue.field);
+  }
+  const lines = [...byRow.entries()].map(([label, fields]) => `${label}: missing ${fields.join(", ")}`);
+  const shown = lines.slice(0, 20);
+  const remaining = lines.length - shown.length;
+  const header = `Can't upload - ${byRow.size} row${byRow.size === 1 ? "" : "s"} missing required fields:`;
+  const footer = remaining > 0 ? `\n…and ${remaining} more row${remaining === 1 ? "" : "s"}.` : "";
+  return `${header}\n${shown.join("\n")}${footer}`;
+}
+
+function renderImportResults(data) {
+  const body = document.getElementById("import-body");
+  const empty = document.getElementById("import-empty");
+  const summary = document.getElementById("import-summary");
+
+  body.innerHTML = "";
+  empty.classList.add("hidden");
+  summary.classList.remove("hidden");
+  document.getElementById("import-created-count").textContent = data.summary.created;
+  document.getElementById("import-updated-count").textContent = data.summary.updated;
+  document.getElementById("import-error-count").textContent = data.summary.errors;
+
+  for (const r of data.results) {
     const tr = document.createElement("tr");
+    const statusPill =
+      r.status === "error"
+        ? `<span class="pill pill-warning"><i class="ti ti-alert-triangle"></i>Error</span>`
+        : `<span class="pill pill-success"><i class="ti ti-check"></i>${r.status === "created" ? "Created" : "Updated"}</span>`;
     tr.innerHTML = `
-      <td>${escapeHtml(t.employeeName)}</td><td>${escapeHtml(t.employeeCode)}</td><td>${escapeHtml(t.outlet)}</td>
-      <td>${money(t.amount)}</td><td>${dateTime(t.occurredAt)}</td><td>${escapeHtml(t.status)}</td>
+      <td>${escapeHtml(r.wallet_no)}</td>
+      <td>${escapeHtml(r.customer_name ?? "—")}</td>
+      <td>${escapeHtml(r.email_id ?? "—")}</td>
+      <td>${escapeHtml(r.phone_number || "—")}</td>
+      <td>${escapeHtml(r.ref_no ?? "—")}</td>
+      <td>${escapeHtml(r["Cost Center"] || "—")}</td>
+      <td>${r.amount != null ? money(r.amount) : "—"}</td>
+      <td>${r.limit != null ? money(r.limit) : "—"}</td>
+      <td>${r.enable_otp == null ? "—" : r.enable_otp ? "Yes" : "No"}</td>
+      <td>${escapeHtml(r.valid_from || "—")}</td>
+      <td>${escapeHtml(r.valid_to || "—")}</td>
+      <td>${escapeHtml(r.Grade || "—")}</td>
+      <td>${escapeHtml(r.DOJ || "—")}</td>
+      <td>${statusPill}</td>
+      <td>${escapeHtml(r.error ?? "—")}</td>
     `;
     body.appendChild(tr);
   }
-
-  transactionsCursor = data.nextCursor;
-  loadMoreBtn.classList.toggle("hidden", !transactionsCursor);
 }
 
-document.getElementById("transactions-load-more").addEventListener("click", () => loadTransactions(true));
+// Fetched independently of any import run - this is what makes the panels
+// show real data on a plain page load/reload, not just right after someone
+// personally clicks "Run Import" in that browser tab.
+async function loadRosterChanges() {
+  try {
+    const data = await api("/employees/roster-changes");
+    renderRosterChanges(data);
+  } catch {
+    // Non-critical - the rest of the dashboard still works if this fails.
+  }
+}
 
-// ---------------- Reconciliation codes (paginated, lives on Overview) ----------------
-
-let codesCursor = null;
-
-async function loadCodes(append = false) {
-  const qs = codesCursor ? `?cursor=${codesCursor}` : "";
-  const data = await api(`/reconciliation-codes${qs}`);
-  const body = document.getElementById("codes-body");
-  const empty = document.getElementById("codes-empty");
-  const loadMoreBtn = document.getElementById("codes-load-more");
-
-  if (!append) body.innerHTML = "";
-  empty.classList.toggle("hidden", append || data.codes.length > 0);
-
-  for (const c of data.codes) {
+function renderRosterChanges(data) {
+  const joinersBody = document.getElementById("joiners-body");
+  const joinersEmpty = document.getElementById("joiners-empty");
+  joinersBody.innerHTML = "";
+  joinersEmpty.classList.toggle("hidden", data.joiners.length > 0);
+  for (const j of data.joiners) {
     const tr = document.createElement("tr");
-    tr.innerHTML = `
-      <td>${escapeHtml(c.code)}</td><td>${escapeHtml(c.employeeName)}</td><td>${escapeHtml(c.employeeCode)}</td>
-      <td>${escapeHtml(c.context)}</td><td>${dateTime(c.createdAt)}</td>
-    `;
-    body.appendChild(tr);
+    tr.innerHTML = `<td>${escapeHtml(j.employeeCode)}</td><td>${escapeHtml(j.name)}</td>`;
+    joinersBody.appendChild(tr);
   }
 
-  codesCursor = data.nextCursor;
-  loadMoreBtn.classList.toggle("hidden", !codesCursor);
+  const leaversBody = document.getElementById("leavers-body");
+  const leaversEmpty = document.getElementById("leavers-empty");
+  leaversBody.innerHTML = "";
+  leaversEmpty.classList.toggle("hidden", data.leavers.length > 0);
+  for (const l of data.leavers) {
+    const tr = document.createElement("tr");
+    tr.innerHTML = `<td>${escapeHtml(l.employeeCode)}</td><td>${escapeHtml(l.name)}</td>`;
+    leaversBody.appendChild(tr);
+  }
 }
-
-document.getElementById("codes-load-more").addEventListener("click", () => loadCodes(true));
 
 // ---------------- Reconcile ----------------
 //
-// Digitory's real export column names haven't been confirmed yet, so this
-// guesses among a few likely headers (case-insensitive) rather than
-// hardcoding one. If Digitory's actual export uses something else, add it
-// to the relevant *_CANDIDATES list below - the matching logic itself
-// doesn't need to change.
-
-const CODE_CANDIDATES = ["code", "reference_code", "reconciliation_code", "otp", "ref_code", "reference"];
-const AMOUNT_CANDIDATES = ["amount", "value", "total", "price"];
-const DATE_CANDIDATES = ["date", "transaction_date", "datetime", "timestamp"];
-const OUTLET_CANDIDATES = ["outlet", "outlet_name", "location", "branch"];
+// The OTP column's real name isn't confirmed yet (Digitory's ledger export
+// doesn't carry it as of the last sample we have - see CLAUDE.md) - guessed
+// via candidates, same pattern this file used before the wallet-ledger
+// columns themselves were confirmed. Update this list if/when a real sample
+// with the actual column name shows up, rather than assuming it's fixed.
+const OTP_CANDIDATES = ["otp", "code", "reference_code", "reconciliation_code", "ref_code", "reference"];
 
 function findColumn(headers, candidates) {
   const lower = headers.map((h) => h.toLowerCase().trim());
@@ -223,12 +347,18 @@ function findColumn(headers, candidates) {
 }
 
 let reconcileRows = null;
+let reconcileData = null; // { reconciled: [...], unreconciled: [...] } from the last successful run
+let reconcileSubtab = "reconciled";
 
 const fileInput = document.getElementById("reconcile-file-input");
 const filenameLabel = document.getElementById("reconcile-filename");
 const runButton = document.getElementById("reconcile-run-button");
 const reconcileError = document.getElementById("reconcile-error");
 
+// The wallet-ledger export's other columns are confirmed/fixed (see
+// data/Ledgers-7.csv): Wallet #, Event, Transaction Id, Payment Name,
+// Amount, Balance, Date Time, User, Status - only the OTP column's name is
+// guessed, since it doesn't exist in the sample we have yet.
 fileInput.addEventListener("change", () => {
   const file = fileInput.files?.[0];
   reconcileError.classList.add("hidden");
@@ -243,29 +373,31 @@ fileInput.addEventListener("change", () => {
     skipEmptyLines: true,
     complete: (result) => {
       const headers = result.meta.fields ?? [];
-      const codeCol = findColumn(headers, CODE_CANDIDATES);
-      if (!codeCol) {
+      const otpColumn = findColumn(headers, OTP_CANDIDATES);
+      if (!otpColumn) {
         reconcileError.textContent =
-          `Couldn't find a code column. Found: ${headers.join(", ") || "(no headers)"}. ` +
-          `Expected one of: ${CODE_CANDIDATES.join(", ")}.`;
+          `Couldn't find an OTP column. Found: ${headers.join(", ") || "(no headers)"}.`;
         reconcileError.classList.remove("hidden");
         return;
       }
-      const amountCol = findColumn(headers, AMOUNT_CANDIDATES);
-      const dateCol = findColumn(headers, DATE_CANDIDATES);
-      const outletCol = findColumn(headers, OUTLET_CANDIDATES);
 
       reconcileRows = result.data
         .map((row) => ({
-          code: String(row[codeCol] ?? "").trim(),
-          amount: amountCol ? Number(row[amountCol]) : undefined,
-          date: dateCol ? String(row[dateCol]) : undefined,
-          outlet: outletCol ? String(row[outletCol]) : undefined,
+          otp: String(row[otpColumn] ?? "").trim(),
+          walletNo: row["Wallet #"] ? String(row["Wallet #"]) : undefined,
+          event: row["Event"] ? String(row["Event"]) : undefined,
+          transactionId: row["Transaction Id"] ? String(row["Transaction Id"]) : undefined,
+          paymentName: row["Payment Name"] ? String(row["Payment Name"]) : undefined,
+          amount: row["Amount"] != null && row["Amount"] !== "" ? Number(String(row["Amount"]).replace(/,/g, "")) : undefined,
+          balance: row["Balance"] != null && row["Balance"] !== "" ? Number(String(row["Balance"]).replace(/,/g, "")) : undefined,
+          dateTime: row["Date Time"] ? String(row["Date Time"]) : undefined,
+          user: row["User"] ? String(row["User"]) : undefined,
+          status: row["Status"] ? String(row["Status"]) : undefined,
         }))
-        .filter((r) => r.code.length > 0);
+        .filter((r) => r.otp.length > 0);
 
       if (reconcileRows.length === 0) {
-        reconcileError.textContent = "No rows with a code value were found in this file.";
+        reconcileError.textContent = "No rows with an OTP value were found in this file.";
         reconcileError.classList.remove("hidden");
         return;
       }
@@ -285,7 +417,9 @@ runButton.addEventListener("click", async () => {
   runButton.textContent = "Reconciling...";
   try {
     const data = await api("/reconcile", { method: "POST", body: JSON.stringify({ rows: reconcileRows }) });
-    renderReconcileResults(data);
+    reconcileData = data;
+    reconcileSubtab = "reconciled";
+    renderReconcileResults();
   } catch {
     reconcileError.textContent = "Reconciliation failed - check your connection and try again.";
     reconcileError.classList.remove("hidden");
@@ -295,29 +429,44 @@ runButton.addEventListener("click", async () => {
   }
 });
 
-function renderReconcileResults(data) {
+document.querySelectorAll("#reconcile-subtabs .subtab").forEach((btn) => {
+  btn.addEventListener("click", () => {
+    reconcileSubtab = btn.dataset.subtab;
+    document.querySelectorAll("#reconcile-subtabs .subtab").forEach((b) => b.classList.toggle("active", b === btn));
+    renderReconcileResults();
+  });
+});
+
+function renderReconcileResults() {
+  const data = reconcileData;
   const body = document.getElementById("reconcile-body");
   const empty = document.getElementById("reconcile-empty");
   const summary = document.getElementById("reconcile-summary");
+  const subtabs = document.getElementById("reconcile-subtabs");
 
   body.innerHTML = "";
   empty.classList.add("hidden");
   summary.classList.remove("hidden");
-  document.getElementById("reconcile-matched-count").textContent = data.summary.matched;
-  document.getElementById("reconcile-unmatched-count").textContent = data.summary.unmatched;
+  subtabs.classList.remove("hidden");
+  document.getElementById("reconcile-matched-count").textContent = data.summary.reconciled;
+  document.getElementById("reconcile-unmatched-count").textContent = data.summary.unreconciled;
 
-  for (const r of data.results) {
+  const rows = reconcileSubtab === "reconciled" ? data.reconciled : data.unreconciled;
+  for (const r of rows) {
     const tr = document.createElement("tr");
-    const statusPill = r.matched
-      ? `<span class="pill pill-success"><i class="ti ti-check"></i>Matched</span>`
-      : `<span class="pill pill-warning"><i class="ti ti-alert-triangle"></i>Unmatched</span>`;
+    const statusPill = r.reconciled
+      ? `<span class="pill pill-success"><i class="ti ti-check"></i>Reconciled</span>`
+      : `<span class="pill pill-warning"><i class="ti ti-alert-triangle"></i>Unreconciled</span>`;
     tr.innerHTML = `
-      <td>${escapeHtml(r.code)}</td>
-      <td>${r.matched ? escapeHtml(r.employeeName) : "—"}</td>
+      <td>${escapeHtml(r.otp)}</td>
+      <td>${escapeHtml(r.walletNo ?? "—")}</td>
+      <td>${r.employeeName ? escapeHtml(r.employeeName) : "—"}</td>
       <td>${r.amount != null ? money(r.amount) : "—"}</td>
-      <td>${escapeHtml(r.outlet ?? "—")}</td>
-      <td>${escapeHtml(r.date ?? "—")}</td>
+      <td>${r.ourAmount != null ? money(r.ourAmount) : "—"}</td>
+      <td>${escapeHtml(r.event ?? "—")}</td>
+      <td>${escapeHtml(r.dateTime ?? "—")}</td>
       <td>${statusPill}</td>
+      <td>${escapeHtml(r.reason ?? "—")}</td>
     `;
     body.appendChild(tr);
   }

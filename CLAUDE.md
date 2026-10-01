@@ -20,16 +20,31 @@ and things to be careful not to break.
 
 ## Non-obvious decisions — don't relitigate these without asking the person first
 
-1. **The Digitory reference code is deliberately NOT a verification/auth
-   mechanism.** It's a 6-digit code we generate and store against an
-   employee, purely so it can be manually cross-referenced later against
-   Digitory's own transaction export. Our backend never calls Digitory,
-   Digitory never calls us, and we never validate/consume the code. This was
-   an explicit, repeated instruction from the person building this — don't
-   "improve" this into a real-time verification flow (e.g. don't build an
-   endpoint that checks/consumes the code) without them asking for it.
-   See `ReconciliationCode` model comment in `schema.prisma` and the
-   "How the Digitory hand-off flow works" section of `README.md`.
+1. **The Digitory reference code is NOT a real-time verification/auth
+   mechanism, but it now IS the automated reconciliation key.** It's a
+   6-digit code we generate and store against an employee (scoped unique
+   per calendar month via `periodKey` - see below), read aloud to the
+   cashier at checkout. Nothing changed about the checkout moment itself:
+   our backend never calls Digitory, Digitory never calls us, and nothing
+   verifies/consumes the code in real time - Digitory processes the payment
+   independently, with no live round-trip to this app. **What changed**
+   (an explicit, later decision - this was originally "manual
+   cross-reference only, don't build automated matching without being
+   asked," and they've since asked): once Digitory's own ledger export
+   carries this code, `POST /admin/reconcile` (`backend/src/routes/
+   admin.ts`) automatically matches uploaded ledger rows against
+   `ReconciliationCode` by code+month and "squares off" the amount against
+   the linked `BenefitTransaction` - reconciled only if both the code AND
+   the amount agree; anything else (code not found, not linked to a
+   transaction, or an amount mismatch) is flagged into an "unreconciled"
+   bucket with a specific reason, shown in the admin dashboard's Reconcile
+   page as two tabs. The real ledger sample we have (`data/Ledgers-7.csv`)
+   does NOT yet have this code column - the frontend guesses candidate
+   column names for it (`OTP_CANDIDATES` in `backend/public/admin/app.js`,
+   same pattern as the old column-guessing for the wallet ledger before
+   its format was confirmed) until a real sample with the actual column
+   name shows up. See `ReconciliationCode` model comment in `schema.prisma`
+   and the "How the Digitory hand-off flow works" section of `README.md`.
 
 2. **Login is Google Sign-In, not phone/OTP.** The original phone + SMS OTP
    login (`/auth/otp/*`) was replaced with Google Sign-In
@@ -77,11 +92,21 @@ and things to be careful not to break.
   unrelated projects (they have a separate "Oven Ops" bakery-production app
   and a "CRM_clone" - different codebases, different concerns, keep this
   repo standalone).
-- Don't change the visual design language (dark background `#111010`, warm
-  gold accent `#d4a24c`, Space Grotesk + Inter fonts on mobile) without
-  discussing it - this was a deliberate choice to avoid the generic
-  dark+neon-green "crypto wallet" look, and it's shared across the mobile
-  app and admin dashboard for brand consistency.
+- Don't change the visual design language without discussing it first - but
+  note it **has already changed once**, at the person's explicit request
+  (they didn't like the original dark theme and gave a reference screenshot
+  to redesign around). Current mobile theme (`mobile/src/theme/tokens.ts`):
+  warm light background `#F7F4EF`, white/pastel cards with soft shadows
+  (no more hairline borders), generous border radius (`radii.lg`=28,
+  `xl`=32), two accent families - brand gold (`colors.gold` `#D4A24C`
+  unchanged, paired with pastel `goldSoft`/readable `goldText`) and a new
+  warm sage green (`sageSoft`/`sageText`) for cards that need to read as
+  distinct from the gold "hero" card. Space Grotesk + Inter fonts are
+  unchanged. The tab bar also gained a floating center "+" button (opens
+  Record Benefit) - see `(tabs)/_layout.tsx`'s `record-action` screen.
+  The **admin dashboard was NOT updated** to match (`backend/public/admin/`
+  still uses the old dark/gold look) - that's a deliberate scope cut for this
+  pass, not an oversight; revisit it if/when asked.
 
 ## Working with this person - practical notes
 
@@ -94,16 +119,65 @@ and things to be careful not to break.
   (`eas build --profile development --platform android`, install the
   resulting `.apk`, then `npx expo start --dev-client`) — after that initial
   install, JS changes still hot-reload the same way Expo Go did.
-- Their local Postgres runs via Docker on **port 5433, not 5432** (moved
-  deliberately to avoid colliding with a native Postgres already on their
-  machine) with credentials `postgres`/`postgres` (see `docker-compose.yml`
-  and `.env`, not the `toit`/`toit` in `.env.example` - those drifted during
-  troubleshooting and the real running instance uses `postgres`/`postgres`).
+- **The app now runs against AWS RDS, not the local Docker Postgres.**
+  `backend/.env`'s `DATABASE_URL` points at `toit-production-db` (an RDS
+  instance in `ap-south-1`), database `toit_production`, inside a dedicated
+  **`toit_benefits` schema** (`?schema=toit_benefits` on the connection
+  string) - that database is shared with the person's other projects
+  (bakery/Oven Ops tables live in its `public` schema, a reconciliation app
+  in a `recon` schema, etc.), so this app gets its own schema namespace to
+  stay isolated per the "keep this repo standalone" note above, without
+  needing a separate database. The local Docker Postgres (port 5433,
+  `postgres`/`postgres`, see `docker-compose.yml`) still exists and still
+  has the same data, but is no longer what the app points at day to day -
+  it was kept only as a fallback, not actively used. **The RDS instance's
+  security group only allows a short allow-list of IPs on port 5432** - if
+  `psql`/the app suddenly can't reach it, that's the first thing to check
+  (`aws ec2 describe-security-groups --group-ids sg-0ef43d20c18b3507b`),
+  not the DB itself; home ISPs reassign public IPs periodically, so this is
+  the most likely thing to go stale over time.
+- **The checked-in `prisma/migrations/` history had drifted from the actual
+  schema** (found while first deploying to RDS, since that was the first
+  time it had ever been replayed from empty onto a truly fresh database -
+  the Docker one had been patched ad hoc over time and never hit this).
+  Two migrations were corrected: `ReconciliationCode`'s original
+  `CREATE TABLE` was missing entirely (added into
+  `20260923110548_reconciliation_code_transaction_link`, the migration that
+  first assumed the table already existed), and a new
+  `20260928090924_drop_redemption_token` migration was added to drop the
+  stale `RedemptionToken` table/column that had been removed by hand but
+  never captured as a migration. Verified by replaying the full history
+  onto an empty scratch database and diffing the result against both the
+  Docker dev database and `schema.prisma` until all three matched exactly -
+  worth redoing that check
+  (`prisma migrate diff --from-url <replayed> --to-url <live> --script`)
+  before trusting `migrate deploy` on a new environment again.
 - If you (Claude Code) don't have network access to `binaries.prisma.sh`,
   `prisma generate` will fail with a checksum/403 error - this is a sandbox
   limitation Claude previously hit repeatedly, not a real problem. On the
   person's actual Mac this resolves fine with normal internet access.
-- Seeded test employee: Rahul Sharma, EMP00123 — `seed.ts` ships with a
-  placeholder Gmail (`replace-with-your-real-gmail@gmail.com`) that must be
-  edited to a real Gmail address before seeding, since that's what's used to
-  sign in (see item 2 above).
+- Seeded test employee: Rahul Sharma, employeeCode `9001` — `seed.ts` ships
+  with a placeholder Gmail (`replace-with-your-real-gmail@gmail.com`) that
+  must be edited to a real Gmail address before seeding, since that's what's
+  used to sign in (see item 2 above).
+- **`employeeCode` = the wallet system's `wallet_no`, not an invented code.**
+  The admin dashboard's Import/Export still match the real external
+  wallet/POS system's own file formats (`data/Register Master-Wallet.xlsx`
+  for the monthly HR upload) - see `backend/src/routes/admin.ts`.
+  **Reconcile is different now: it's back to code-based matching (see item
+  1), not wallet number.** The wallet-number-by-`Ledgers-7.csv` version
+  (adopted only because that sample had no code column) is commented out
+  in `admin.ts`, not deleted, in case a mixed/fallback approach is ever
+  wanted again - don't revive it as the primary mechanism without asking,
+  same as any other "supersede a superseded thing" flip in this file.
+- **Import is all-or-nothing - every column is required on every row, no
+  exceptions.** An explicit decision (superseding an earlier one where only
+  `email_id` was required and other columns were optional/nullable). The
+  whole file is validated upfront in `POST /employees/import`
+  (`backend/src/routes/admin.ts`) before any database write happens - if
+  even one row is missing one field, nothing is imported and the admin gets
+  back exactly which row(s)/field(s) are missing (`error:
+  "missing_required_fields"`, with an `issues` array), rendered as a
+  toast-style banner in `backend/public/admin/app.js`
+  (`formatMissingFieldsError`). Don't relax this back to per-row
+  create-what-you-can leniency without asking first.

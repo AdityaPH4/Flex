@@ -1,8 +1,8 @@
 import React, { useCallback, useState } from "react";
-import { View, Text, StyleSheet, ScrollView, RefreshControl } from "react-native";
+import { View, Text, StyleSheet, ScrollView, RefreshControl, ActivityIndicator } from "react-native";
 import { useRouter, useFocusEffect } from "expo-router";
 import { SafeAreaView } from "react-native-safe-area-context";
-import { Hash, ReceiptText, History as HistoryIcon } from "lucide-react-native";
+import { ReceiptText, History as HistoryIcon, Wallet, TrendingDown } from "lucide-react-native";
 import { useAuth } from "@/auth/AuthContext";
 import { useIsOnline } from "@/api/useIsOnline";
 import { api } from "@/api/client";
@@ -11,26 +11,25 @@ import { Card } from "@/components/Card";
 import { QuickAction } from "@/components/QuickAction";
 import { TransactionRow } from "@/components/TransactionRow";
 import { OfflineBanner } from "@/components/OfflineBanner";
-import { colors, spacing, type as t } from "@/theme/tokens";
-
-function greeting(): string {
-  const hour = new Date().getHours();
-  if (hour < 12) return "Good morning";
-  if (hour < 17) return "Good afternoon";
-  return "Good evening";
-}
+import { InstallAppBanner } from "@/components/InstallAppBanner";
+import { colors, radii, spacing, type as t } from "@/theme/tokens";
 
 export default function HomeScreen() {
   const router = useRouter();
-  const { profile, cachedIdentity } = useAuth();
   const isOnline = useIsOnline();
+  const { isBootstrapping } = useAuth();
 
   const [balance, setBalance] = useState<CurrentBalance | null>(null);
   const [recent, setRecent] = useState<Transaction[]>([]);
   const [refreshing, setRefreshing] = useState(false);
   const [loadError, setLoadError] = useState(false);
-
-  const displayName = (profile?.name ?? cachedIdentity?.name ?? "").split(" ")[0];
+  // Distinguishes "first ever load on this screen" from "already showed
+  // data once, now quietly refreshing in the background" - only the first
+  // one should show a full loading state. A slow network/busy server (a
+  // queued request can genuinely take a few seconds under heavy concurrent
+  // load) should look like "working, just taking a moment", never like a
+  // blank, broken screen.
+  const [hasLoadedOnce, setHasLoadedOnce] = useState(false);
 
   const load = useCallback(async () => {
     try {
@@ -40,13 +39,23 @@ export default function HomeScreen() {
       setLoadError(false);
     } catch {
       setLoadError(true);
+    } finally {
+      setHasLoadedOnce(true);
     }
   }, []);
 
   useFocusEffect(
     useCallback(() => {
+      // AuthContext's own session-restore is async (reads storage, then
+      // calls setAuthToken) - React fires a child's effects before its
+      // parent's, so on a cold start this screen's effect would otherwise
+      // run BEFORE that token is set, sending an unauthenticated request
+      // that fails with a spurious "couldn't load" error every time. Wait
+      // for bootstrap to finish; the dependency change re-fires this once
+      // it does.
+      if (isBootstrapping) return;
       load();
-    }, [load])
+    }, [load, isBootstrapping])
   );
 
   const onRefresh = async () => {
@@ -55,52 +64,73 @@ export default function HomeScreen() {
     setRefreshing(false);
   };
 
+  if (!hasLoadedOnce) {
+    return (
+      <SafeAreaView style={styles.screen} edges={["top"]}>
+        <View style={styles.loadingFill}>
+          <ActivityIndicator color={colors.goldText} size="large" />
+          <Text style={styles.loadingText}>Loading your benefits…</Text>
+        </View>
+      </SafeAreaView>
+    );
+  }
+
   return (
     <SafeAreaView style={styles.screen} edges={["top"]}>
       <ScrollView
         contentContainerStyle={styles.scrollContent}
         refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={colors.gold} />}
       >
-        <Text style={styles.greeting}>
-          {greeting()}, {displayName || "there"} 👋
-        </Text>
+        <View style={styles.brandRow}>
+          <Text style={styles.brandName}>TREAT</Text>
+          <View style={styles.versionBadge}>
+            <Text style={styles.versionBadgeText}>v1</Text>
+          </View>
+        </View>
+
+        <InstallAppBanner />
 
         {!isOnline && <OfflineBanner message="You're offline. Showing your last known balance." />}
         {isOnline && loadError && (
           <OfflineBanner message="Couldn't reach the server. Pull down to try again." />
         )}
 
-        <Card style={styles.heroCard} accent>
+        <Card tone="gold" style={styles.heroCard}>
           <Text style={styles.heroLabel}>Remaining this month</Text>
           <Text style={styles.heroNumber}>
             ₹{balance ? balance.remaining.toLocaleString("en-IN") : "—"}
           </Text>
-
-          <View style={styles.heroStatsRow}>
-            <View style={styles.heroStat}>
-              <Text style={styles.heroStatValue}>
-                ₹{balance ? balance.allowance.toLocaleString("en-IN") : "—"}
-              </Text>
-              <Text style={styles.heroStatLabel}>Monthly allowance</Text>
-            </View>
-            <View style={styles.heroStatDivider} />
-            <View style={styles.heroStat}>
-              <Text style={styles.heroStatValue}>
-                ₹{balance ? balance.used.toLocaleString("en-IN") : "—"}
-              </Text>
-              <Text style={styles.heroStatLabel}>Used</Text>
-            </View>
-          </View>
         </Card>
 
+        <View style={styles.statsRow}>
+          <Card tone="sage" style={styles.statCard}>
+            <View style={styles.statIconRow}>
+              <Wallet size={18} color={colors.sageText} />
+            </View>
+            <Text style={styles.statValue}>
+              ₹{balance ? balance.allowance.toLocaleString("en-IN") : "—"}
+            </Text>
+            <Text style={styles.statLabel}>Monthly allowance</Text>
+          </Card>
+          <Card tone="neutral" style={styles.statCard}>
+            <View style={styles.statIconRow}>
+              <TrendingDown size={18} color={colors.textSecondary} />
+            </View>
+            <Text style={styles.statValue}>
+              ₹{balance ? balance.used.toLocaleString("en-IN") : "—"}
+            </Text>
+            <Text style={styles.statLabel}>Used</Text>
+          </Card>
+        </View>
+
         <View style={styles.quickActionsRow}>
-          <QuickAction icon={Hash} label="Get Code" onPress={() => router.push("/(tabs)/benefits")} />
           <QuickAction
             icon={ReceiptText}
-            label="Record Benefit"
+            label="Add Payment"
+            tone="gold"
             onPress={() => router.push("/record-benefit")}
           />
-          <QuickAction icon={HistoryIcon} label="History" onPress={() => router.push("/(tabs)/history")} />
+          <QuickAction icon={HistoryIcon} label="History" tone="sage" onPress={() => router.push("/(tabs)/history")} />
         </View>
 
         <View style={styles.sectionHeader}>
@@ -129,20 +159,30 @@ export default function HomeScreen() {
 
 const styles = StyleSheet.create({
   screen: { flex: 1, backgroundColor: colors.bg },
+  loadingFill: { flex: 1, alignItems: "center", justifyContent: "center", gap: spacing.md },
+  loadingText: { ...t.body, color: colors.textSecondary },
   scrollContent: { padding: spacing.lg, paddingBottom: spacing.xxxl, gap: spacing.lg },
-  greeting: { ...t.h1, color: colors.textPrimary },
-  heroCard: { gap: spacing.md },
-  heroLabel: { ...t.label, color: colors.textSecondary, textTransform: "uppercase" },
-  heroNumber: { ...t.heroNumber, color: colors.gold },
-  heroStatsRow: { flexDirection: "row", marginTop: spacing.sm },
-  heroStat: { flex: 1 },
-  heroStatValue: { ...t.h2, color: colors.textPrimary },
-  heroStatLabel: { ...t.caption, color: colors.textMuted, marginTop: 2 },
-  heroStatDivider: { width: 1, backgroundColor: colors.cardBorder, marginHorizontal: spacing.lg },
+  brandRow: { flexDirection: "row", alignItems: "center", gap: spacing.sm },
+  brandName: { ...t.h1, color: colors.textPrimary, letterSpacing: 1 },
+  versionBadge: {
+    backgroundColor: colors.goldSoft,
+    borderRadius: radii.pill,
+    paddingHorizontal: spacing.sm,
+    paddingVertical: 2,
+  },
+  versionBadgeText: { ...t.label, color: colors.goldText, textTransform: "uppercase" },
+  heroCard: { gap: spacing.sm },
+  heroLabel: { ...t.label, color: colors.goldText, textTransform: "uppercase" },
+  heroNumber: { ...t.heroNumber, color: colors.goldText },
+  statsRow: { flexDirection: "row", gap: spacing.md },
+  statCard: { flex: 1, gap: spacing.xs },
+  statIconRow: { marginBottom: spacing.xs },
+  statValue: { ...t.h2, color: colors.textPrimary },
+  statLabel: { ...t.caption, color: colors.textMuted },
   quickActionsRow: { flexDirection: "row", gap: spacing.md },
   sectionHeader: { flexDirection: "row", justifyContent: "space-between", alignItems: "center" },
   sectionTitle: { ...t.h2, color: colors.textPrimary },
-  sectionLink: { ...t.caption, color: colors.gold },
+  sectionLink: { ...t.caption, color: colors.goldText },
   emptyText: { ...t.body, color: colors.textMuted },
-  rowDivider: { height: 1, backgroundColor: colors.cardBorder },
+  rowDivider: { height: 1, backgroundColor: colors.surfaceBorder },
 });

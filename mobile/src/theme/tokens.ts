@@ -1,38 +1,42 @@
 /**
  * TOIT Employee Benefits - design tokens.
  *
- * Direction: "premium benefit voucher", not "crypto wallet". Dark, warm,
- * restrained. One signature accent (warm gold) instead of the neon-green
- * that fintech/crypto dashboards default to - gold reads as "membership /
- * voucher" rather than "trading app", and ties back to TOIT's food & hospitality
- * context. Everything else stays quiet neutral warm-greys so the gold means
- * something when it appears (balance, primary actions, the benefit card).
+ * Direction: warm, light, "premium benefit voucher" - soft pastel stat cards
+ * with generous rounded corners and gentle shadows instead of hairline
+ * borders. The brand gold (#D4A24C) survives as the primary accent; a warm
+ * sage green joins it as a second accent family so cards can differentiate
+ * (allowance vs. used vs. remaining) without reaching for cold, clinical
+ * colors - everything stays warm-toned, including the neutrals.
  */
 
 export const colors = {
-  // Backgrounds - warm near-black, not pure #000 (flatter, less harsh on OLED glare)
-  bg: "#111010",
-  bgElevated: "#1A1817",
-  card: "#1E1B19",
-  cardBorder: "rgba(255,255,255,0.07)",
+  // Background - warm cream, not stark white
+  bg: "#F7F4EF",
+  surface: "#FFFFFF",
+  surfaceBorder: "rgba(36,31,26,0.06)",
 
-  // Text
-  textPrimary: "#F5F1EC",
-  textSecondary: "#A79E93",
-  textMuted: "#736A60",
+  // Text - warm near-black instead of pure black
+  textPrimary: "#241F1A",
+  textSecondary: "#746B60",
+  textMuted: "#A79C8E",
 
-  // Signature accent - warm gold. Used sparingly: balance figure, primary CTA,
-  // active nav state, the benefit-ID card border.
+  // Signature accent - warm gold. Same hue as before, now paired with a
+  // pastel fill for cards (was a transparent border tint on dark bg).
   gold: "#D4A24C",
-  goldSoft: "rgba(212,162,76,0.14)",
-  goldBorder: "rgba(212,162,76,0.35)",
+  goldSoft: "#F8E9C9",
+  goldText: "#96662A",
+
+  // Secondary accent - warm sage (not clinical mint), for cards that need to
+  // read as distinct from the gold/hero card.
+  sageSoft: "#E4EEDD",
+  sageText: "#5A7D4E",
 
   // Status
-  success: "#7FA980",
-  danger: "#C9705E",
+  success: "#5A8F5E",
+  danger: "#C05B4A",
 
   // Overlays
-  scrim: "rgba(0,0,0,0.55)",
+  scrim: "rgba(36,31,26,0.45)",
 };
 
 export const spacing = {
@@ -46,10 +50,29 @@ export const spacing = {
 };
 
 export const radii = {
-  sm: 10,
-  md: 16,
-  lg: 24,
+  sm: 12,
+  md: 20,
+  lg: 28,
+  xl: 32,
   pill: 999,
+};
+
+// Soft shadows replace the old hairline-border card style.
+export const shadows = {
+  card: {
+    shadowColor: "#241F1A",
+    shadowOpacity: 0.06,
+    shadowRadius: 12,
+    shadowOffset: { width: 0, height: 4 },
+    elevation: 3,
+  },
+  row: {
+    shadowColor: "#241F1A",
+    shadowOpacity: 0.04,
+    shadowRadius: 6,
+    shadowOffset: { width: 0, height: 2 },
+    elevation: 1,
+  },
 };
 
 // Space Grotesk for the big numerals (distinct geometric character, reads well

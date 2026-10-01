@@ -24,7 +24,7 @@ model Role {
 
 model Outlet {
   id      String @id @default(uuid())
-  name    String
+  name    String @unique // matched against the wallet upload's "Cost Center" column - find-or-create by name
   address String?
 
   transactions BenefitTransaction[]
@@ -36,12 +36,12 @@ model Outlet {
 
 model Employee {
   id           String   @id @default(uuid())
-  employeeCode String   @unique // e.g. "EMP00123" - display only, never used to authenticate
+  employeeCode String   @unique // = the wallet system's wallet_no - the real identifier HR uploads, not an invented code
   name         String
   email        String   @unique // used for Google Sign-In login - must match the employee's Google account
   phone        String?  // optional HR contact info only - not used for login
   photoUrl     String?
-  designation  String?  // free-text label shown in UI (may differ from Role.name)
+  designation  String?  // free-text label shown in UI (may differ from Role.name) - sourced from the wallet upload's ref_no
   department   String?
 
   roleId String
@@ -49,6 +49,16 @@ model Employee {
 
   homeOutletId String?
   homeOutlet   Outlet? @relation(fields: [homeOutletId], references: [id])
+
+  // The rest of these mirror fields from the wallet system's own "Register
+  // Master-Wallet" upload format 1:1 - stored for fidelity even though the
+  // app doesn't act on all of them yet (see Import/Export in admin.ts).
+  walletLimit     Int?
+  otpEnabled      Boolean   @default(false)
+  grade           String?
+  dateOfJoining   DateTime?
+  walletValidFrom DateTime?
+  walletValidTo   DateTime?
 
   active Boolean @default(true)
 
@@ -115,8 +125,10 @@ model BenefitTransaction {
   outlet   Outlet? @relation(fields: [outletId], references: [id])
   outletName String? // fallback free-text if outlet isn't a system record yet
 
-  amount     Int // rupees, integer
-  items      Json? // [{ name, amount }] - simple, no separate line-item table needed for MVP
+  amount     Int // rupees, integer - the portion actually deducted from the benefit allowance
+  cashAmount Int? // rupees, integer - extra paid in cash when amount alone couldn't cover the bill; never touches balance enforcement
+  items      Json? // [{ name, amount }] - retired in favor of billNo below (see CLAUDE.md), kept nullable so existing rows with real data aren't lost; no longer written to by new transactions
+  billNo     String? // the outlet's own bill/receipt number, entered by the employee - replaces the old free-form items list
   occurredAt DateTime @default(now())
   notes      String?
 
@@ -125,6 +137,8 @@ model BenefitTransaction {
   idempotencyKey String @unique // client-generated, prevents duplicate submission on retry
 
   createdAt DateTime @default(now())
+
+  reconciliationCodes ReconciliationCode[]
 
   @@index([employeeId, occurredAt])
   @@index([periodId])
@@ -146,19 +160,36 @@ model BenefitTransaction {
 // even if the employee's details change or the employee record is later
 // deactivated.
 model ReconciliationCode {
-  id         String   @id @default(uuid())
-  code       String   @unique // short numeric code, read aloud and typed into Digitory
+  id   String @id @default(uuid())
+  code String // short numeric code, read aloud and typed into Digitory
+
+  // The calendar month this code was issued in ("2026-09") - codes are only
+  // guaranteed unique WITHIN a month (see @@unique below), not globally, so
+  // the same 6-digit value can legitimately be reused in a later month. This
+  // keeps the "already used" pool bounded to one month's worth of codes
+  // (rather than growing forever) and matches how reconciliation itself is
+  // monthly - a ledger upload only ever needs to disambiguate codes issued
+  // within that same month.
+  periodKey String
+
   employeeId String
   employee   Employee @relation(fields: [employeeId], references: [id])
 
   employeeName String
   employeeCode String
 
+  // Which specific self-recorded spend this code was generated for - nullable
+  // since not every code has to be tied to one (and a stale code can be
+  // regenerated against the same transaction via "New code").
+  transactionId String?
+  transaction   BenefitTransaction? @relation(fields: [transactionId], references: [id])
+
   context String @default("Benefit redemption") // what this code was generated for
 
   expiresAt DateTime // informational only - not enforced against anything, since nothing verifies this code
   createdAt DateTime @default(now())
 
+  @@unique([code, periodKey])
   @@index([employeeId])
   @@index([createdAt])
 }

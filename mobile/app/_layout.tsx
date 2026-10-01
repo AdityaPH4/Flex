@@ -40,11 +40,12 @@ export default function RootLayout() {
   return (
     <SafeAreaProvider>
       <AuthProvider>
-        <StatusBar style="light" />
+        <StatusBar style="dark" />
         <Stack screenOptions={{ headerShown: false, contentStyle: { backgroundColor: colors.bg } }}>
           <Stack.Screen name="(tabs)" />
           <Stack.Screen name="login" />
           <Stack.Screen name="record-benefit" options={{ presentation: "modal" }} />
+          <Stack.Screen name="transaction-detail" options={{ presentation: "modal" }} />
         </Stack>
       </AuthProvider>
     </SafeAreaProvider>

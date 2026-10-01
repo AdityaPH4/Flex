@@ -5,10 +5,12 @@ import { prisma } from "../db";
 import { env } from "../env";
 import { requireAuth, type AuthedRequest } from "../middleware/auth";
 import { getOrCreatePeriod } from "../lib/period";
-import { recordBenefitSpend, InsufficientBalanceError } from "../lib/spend";
+import { recordBenefitSpend, InsufficientBalanceError, WalletNotValidError } from "../lib/spend";
 import type { Prisma } from "@prisma/client";
 
-type TransactionWithOutlet = Prisma.BenefitTransactionGetPayload<{ include: { outlet: true } }>;
+type TransactionWithOutlet = Prisma.BenefitTransactionGetPayload<{
+  include: { outlet: true; reconciliationCodes: true };
+}>;
 
 export const meRouter = Router();
 meRouter.use(requireAuth);
@@ -75,7 +77,13 @@ meRouter.get("/benefits/transactions", async (req: AuthedRequest, res) => {
 
   const rows = await prisma.benefitTransaction.findMany({
     where,
-    include: { outlet: true },
+    include: {
+      outlet: true,
+      // Most recent code only - a transaction can have more than one if the
+      // person tapped "New code" again, but the history view only ever
+      // wants to show the one that's actually still valid to read out.
+      reconciliationCodes: { orderBy: { createdAt: "desc" }, take: 1 },
+    },
     orderBy: { occurredAt: "desc" },
     take: limit + 1,
     ...(cursor ? { cursor: { id: cursor }, skip: 1 } : {}),
@@ -89,10 +97,11 @@ meRouter.get("/benefits/transactions", async (req: AuthedRequest, res) => {
       id: t.id,
       outlet: t.outlet?.name ?? t.outletName ?? "TOIT",
       amount: t.amount,
-      items: t.items,
+      billNo: t.billNo,
       occurredAt: t.occurredAt,
       notes: t.notes,
       status: t.status,
+      reconciliationCode: t.reconciliationCodes[0]?.code ?? null,
     })),
     nextCursor: hasMore ? page[page.length - 1].id : null,
   });
@@ -100,11 +109,10 @@ meRouter.get("/benefits/transactions", async (req: AuthedRequest, res) => {
 
 const createTransactionSchema = z.object({
   amount: z.number().int().positive(),
+  cashAmount: z.number().int().nonnegative().optional(),
   outletId: z.string().uuid().optional(),
-  outletName: z.string().max(120).optional(),
-  items: z
-    .array(z.object({ name: z.string().max(80), amount: z.number().nonnegative() }))
-    .optional(),
+  outletName: z.string().trim().min(1).max(120),
+  billNo: z.string().trim().max(120).optional(),
   occurredAt: z.string().datetime().optional(),
   notes: z.string().max(280).optional(),
   idempotencyKey: z.string().min(8).max(128),
@@ -124,7 +132,8 @@ meRouter.post("/benefits/transactions", async (req: AuthedRequest, res) => {
     const txn = await recordBenefitSpend({
       employeeId: req.auth!.employeeId,
       amount: body.amount,
-      items: body.items,
+      cashAmount: body.cashAmount,
+      billNo: body.billNo ?? null,
       outletId: body.outletId ?? null,
       outletName: body.outletName ?? null,
       notes: body.notes ?? null,
@@ -148,12 +157,16 @@ meRouter.post("/benefits/transactions", async (req: AuthedRequest, res) => {
     if (err instanceof InsufficientBalanceError) {
       return res.status(409).json({ error: "insufficient_balance" });
     }
+    if (err instanceof WalletNotValidError) {
+      return res.status(403).json({ error: "wallet_not_valid" });
+    }
     throw err;
   }
 });
 
 const reconciliationCodeSchema = z.object({
   context: z.string().max(120).optional(),
+  transactionId: z.string().uuid().optional(),
 });
 
 function generateNumericCode(): string {
@@ -180,19 +193,48 @@ meRouter.post("/benefits/reconciliation-code", async (req: AuthedRequest, res) =
   const employee = await prisma.employee.findUniqueOrThrow({
     where: { id: req.auth!.employeeId },
   });
+
+  // If this code is for a specific self-recorded spend, confirm that spend
+  // actually belongs to the person asking - never let someone generate a
+  // code that looks linked to another employee's transaction.
+  let context = parsed.data.context;
+  if (parsed.data.transactionId) {
+    const txn = await prisma.benefitTransaction.findUnique({
+      where: { id: parsed.data.transactionId },
+    });
+    if (!txn || txn.employeeId !== employee.id) {
+      return res.status(404).json({ error: "transaction_not_found" });
+    }
+    context =
+      context ??
+      (txn.cashAmount
+        ? `${txn.outletName ?? "TOIT"} · ₹${txn.amount} + ₹${txn.cashAmount} cash`
+        : `${txn.outletName ?? "TOIT"} · ₹${txn.amount}`);
+  }
+
   const expiresAt = new Date(Date.now() + env.reconciliationCodeTtlSeconds * 1000);
 
+  // Scoped to the calendar month, not globally - see the periodKey comment
+  // on the ReconciliationCode model. Digitory's ledger export (once it
+  // carries this code) only ever needs to disambiguate codes issued within
+  // the same month it's reconciling, so reuse across different months is
+  // fine and expected.
+  const now = new Date();
+  const periodKey = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`;
+
   // Unique-constraint retry: astronomically unlikely with 1,000,000 possible
-  // codes, but cheap to guard against rather than assume away.
+  // codes per month, but cheap to guard against rather than assume away.
   for (let attempt = 0; attempt < 5; attempt++) {
     try {
       const created = await prisma.reconciliationCode.create({
         data: {
           code: generateNumericCode(),
+          periodKey,
           employeeId: employee.id,
           employeeName: employee.name,
           employeeCode: employee.employeeCode,
-          context: parsed.data.context ?? "Benefit redemption",
+          transactionId: parsed.data.transactionId,
+          context: context ?? "Benefit redemption",
           expiresAt,
         },
       });

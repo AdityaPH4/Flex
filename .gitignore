@@ -1,0 +1,8 @@
+# Real employee/wallet/transaction data shared for reference (names, emails,
+# amounts) - never commit this. backend/ and mobile/ have their own
+# .gitignore for node_modules/build output etc.
+/data/
+
+# Not actually read by the app (backend/.env is what's loaded) but ignored
+# here too in case a secret ever ends up pasted into this one by mistake.
+/.env

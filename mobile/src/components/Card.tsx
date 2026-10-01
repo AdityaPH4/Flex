@@ -1,17 +1,14 @@
 import React from "react";
 import { View, StyleSheet, type ViewProps } from "react-native";
-import { colors, radii, spacing } from "../theme/tokens";
+import { colors, radii, spacing, shadows } from "../theme/tokens";
 
 interface CardProps extends ViewProps {
-  accent?: boolean; // gold-tinted border, reserved for the one signature card
+  tone?: "neutral" | "gold" | "sage";
 }
 
-export function Card({ style, accent, children, ...rest }: CardProps) {
+export function Card({ style, tone = "neutral", children, ...rest }: CardProps) {
   return (
-    <View
-      style={[styles.base, accent ? styles.accent : undefined, style]}
-      {...rest}
-    >
+    <View style={[styles.base, toneStyles[tone], style]} {...rest}>
       {children}
     </View>
   );
@@ -19,13 +16,14 @@ export function Card({ style, accent, children, ...rest }: CardProps) {
 
 const styles = StyleSheet.create({
   base: {
-    backgroundColor: colors.card,
     borderRadius: radii.lg,
-    borderWidth: 1,
-    borderColor: colors.cardBorder,
     padding: spacing.lg,
+    ...shadows.card,
   },
-  accent: {
-    borderColor: colors.goldBorder,
-  },
+});
+
+const toneStyles = StyleSheet.create({
+  neutral: { backgroundColor: colors.surface },
+  gold: { backgroundColor: colors.goldSoft },
+  sage: { backgroundColor: colors.sageSoft },
 });

@@ -26,12 +26,21 @@ async function main() {
     },
     update: {},
   });
-  const koramangala = await prisma.outlet.upsert({
+  const bagmane = await prisma.outlet.upsert({
     where: { id: "00000000-0000-0000-0000-000000000002" },
     create: {
       id: "00000000-0000-0000-0000-000000000002",
-      name: "TOIT Koramangala",
-      address: "5th Block, Koramangala, Bengaluru",
+      name: "TOIT Bagmane",
+      address: "Bagmane Tech Park, C V Raman Nagar, Bengaluru",
+    },
+    update: { name: "TOIT Bagmane", address: "Bagmane Tech Park, C V Raman Nagar, Bengaluru" },
+  });
+  const pune = await prisma.outlet.upsert({
+    where: { id: "00000000-0000-0000-0000-000000000003" },
+    create: {
+      id: "00000000-0000-0000-0000-000000000003",
+      name: "TOIT Pune",
+      address: "Koregaon Park, Pune",
     },
     update: {},
   });
@@ -41,9 +50,9 @@ async function main() {
   // console-printed OTP did - whatever email is seeded here is what you must
   // sign in with on the phone to log in as this employee.
   const rahul = await prisma.employee.upsert({
-    where: { employeeCode: "EMP00123" },
+    where: { employeeCode: "9001" },
     create: {
-      employeeCode: "EMP00123",
+      employeeCode: "9001",
       name: "Rahul Sharma",
       email: "aditya@ph4.in",
       phone: "+919900000123",
@@ -67,16 +76,16 @@ async function main() {
   });
 
   await prisma.employee.upsert({
-    where: { employeeCode: "EMP00991" },
+    where: { employeeCode: "9002" },
     create: {
-      employeeCode: "EMP00991",
+      employeeCode: "9002",
       name: "Anita Rao",
       email: "replace-with-another-real-gmail@gmail.com",
       phone: "+919900000991",
       designation: "Manager",
       department: "Operations",
       roleId: manager.id,
-      homeOutletId: koramangala.id,
+      homeOutletId: bagmane.id,
     },
     update: {
       name: "Anita Rao",
@@ -85,7 +94,7 @@ async function main() {
       designation: "Manager",
       department: "Operations",
       roleId: manager.id,
-      homeOutletId: koramangala.id,
+      homeOutletId: bagmane.id,
     },
   });
 
@@ -128,7 +137,7 @@ async function main() {
     create: {
       employeeId: rahul.id,
       periodId: period.id,
-      outletId: koramangala.id,
+      outletId: bagmane.id,
       amount: 400,
       items: [{ name: "Pizza", amount: 400 }],
       occurredAt: new Date(now.getTime() - 24 * 60 * 60 * 1000),

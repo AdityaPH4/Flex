@@ -1,22 +1,24 @@
 import React from "react";
 import { Pressable, Text, View, StyleSheet } from "react-native";
 import type { LucideIcon } from "lucide-react-native";
-import { colors, radii, spacing, type as t } from "../theme/tokens";
+import { colors, radii, spacing, shadows, type as t } from "../theme/tokens";
 
 interface Props {
   icon: LucideIcon;
   label: string;
   onPress: () => void;
+  tone?: "gold" | "sage";
 }
 
-export function QuickAction({ icon: Icon, label, onPress }: Props) {
+export function QuickAction({ icon: Icon, label, onPress, tone = "gold" }: Props) {
+  const iconColor = tone === "gold" ? colors.goldText : colors.sageText;
   return (
     <Pressable
       onPress={onPress}
       style={({ pressed }) => [styles.wrap, pressed && styles.pressed]}
     >
-      <View style={styles.iconCircle}>
-        <Icon size={20} color={colors.textPrimary} />
+      <View style={[styles.iconCircle, tone === "gold" ? styles.iconCircleGold : styles.iconCircleSage]}>
+        <Icon size={20} color={iconColor} />
       </View>
       <Text style={styles.label}>{label}</Text>
     </Pressable>
@@ -36,11 +38,15 @@ const styles = StyleSheet.create({
     width: 52,
     height: 52,
     borderRadius: radii.pill,
-    backgroundColor: colors.bgElevated,
-    borderWidth: 1,
-    borderColor: colors.cardBorder,
     alignItems: "center",
     justifyContent: "center",
+    ...shadows.row,
+  },
+  iconCircleGold: {
+    backgroundColor: colors.goldSoft,
+  },
+  iconCircleSage: {
+    backgroundColor: colors.sageSoft,
   },
   label: {
     ...t.caption,

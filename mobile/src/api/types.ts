@@ -17,19 +17,15 @@ export interface CurrentBalance {
   remaining: number;
 }
 
-export interface TransactionItem {
-  name: string;
-  amount: number;
-}
-
 export interface Transaction {
   id: string;
   outlet: string;
   amount: number;
-  items: TransactionItem[] | null;
+  billNo: string | null;
   occurredAt: string;
   notes: string | null;
   status: string;
+  reconciliationCode: string | null;
 }
 
 export interface ReconciliationCodeResponse {

@@ -24,6 +24,19 @@ app.use("/api/admin", adminRouter);
 // desktop, at http://<server-address>:4000/admin
 app.use("/admin", express.static(path.join(__dirname, "..", "public", "admin")));
 
+// The employee-facing PWA - the Expo web export (`npx expo export --platform
+// web` in mobile/, copied here as public/app), served at the site root, same
+// origin as the API so the mobile client's EXPO_PUBLIC_API_URL can just be
+// empty/relative. Falls back to index.html for any path that isn't a real
+// static file, since expo-router's client-side routes (e.g. /history) only
+// exist in the JS bundle, not as files on disk - a hard refresh on one of
+// those needs index.html to load so the router can take over.
+const webAppDir = path.join(__dirname, "..", "public", "app");
+app.use(express.static(webAppDir));
+app.get(/^(?!\/(auth|api|admin|health)(\/|$)).*/, (_req, res) => {
+  res.sendFile(path.join(webAppDir, "index.html"));
+});
+
 // Central error handler - keep 4xx thrown as-is upstream, this is a catch-all.
 app.use(
   (err: any, _req: express.Request, res: express.Response, _next: express.NextFunction) => {

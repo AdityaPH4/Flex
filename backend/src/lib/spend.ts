@@ -11,10 +11,18 @@ export class InsufficientBalanceError extends Error {
   }
 }
 
+export class WalletNotValidError extends Error {
+  constructor() {
+    super("This employee's wallet is not valid for the given date.");
+    this.name = "WalletNotValidError";
+  }
+}
+
 export interface RecordSpendInput {
   employeeId: string;
-  amount: number; // whole rupees, > 0
-  items?: unknown;
+  amount: number; // whole rupees, > 0 - the portion deducted from the allowance
+  cashAmount?: number; // whole rupees - paid outside the benefit system, never checked/enforced
+  billNo?: string | null; // the outlet's own bill/receipt number, entered by the employee
   outletId?: string | null;
   outletName?: string | null;
   notes?: string | null;
@@ -51,6 +59,18 @@ export async function recordBenefitSpend(input: RecordSpendInput, existingTx?: D
   if (existing) return existing;
 
   const run = async (tx: Db) => {
+    // A separate, earlier guard - not part of the atomic balance UPDATE below.
+    // The validity window doesn't shift under concurrent requests the way a
+    // numeric balance does, so it doesn't need that same atomicity treatment.
+    const employee = await tx.employee.findUniqueOrThrow({ where: { id: input.employeeId } });
+    const spendAt = input.occurredAt ?? new Date();
+    if (
+      (employee.walletValidFrom && spendAt < employee.walletValidFrom) ||
+      (employee.walletValidTo && spendAt > employee.walletValidTo)
+    ) {
+      throw new WalletNotValidError();
+    }
+
     const period = await getOrCreatePeriod(tx, input.employeeId, input.occurredAt);
 
     const updated = await tx.$queryRaw<{ id: string }[]>`
@@ -71,7 +91,8 @@ export async function recordBenefitSpend(input: RecordSpendInput, existingTx?: D
         outletId: input.outletId ?? null,
         outletName: input.outletName ?? null,
         amount: input.amount,
-        items: input.items as any,
+        cashAmount: input.cashAmount ?? null,
+        billNo: input.billNo ?? null,
         occurredAt: input.occurredAt ?? new Date(),
         notes: input.notes ?? null,
         idempotencyKey: input.idempotencyKey,

@@ -10,7 +10,7 @@ export default function Index() {
   if (isBootstrapping) {
     return (
       <View style={{ flex: 1, backgroundColor: colors.bg, alignItems: "center", justifyContent: "center" }}>
-        <ActivityIndicator color={colors.gold} />
+        <ActivityIndicator color={colors.goldText} />
       </View>
     );
   }

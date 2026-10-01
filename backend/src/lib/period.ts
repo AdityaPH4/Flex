@@ -53,9 +53,18 @@ export interface EmployeeCurrentBalance {
   employeeId: string;
   employeeCode: string;
   name: string;
+  email: string;
+  phone: string | null;
   roleName: string;
+  designation: string | null;
   department: string | null;
   homeOutlet: string | null;
+  walletLimit: number | null;
+  otpEnabled: boolean;
+  grade: string | null;
+  dateOfJoining: Date | null;
+  walletValidFrom: Date | null;
+  walletValidTo: Date | null;
   allowance: number;
   used: number;
   remaining: number;
@@ -94,9 +103,18 @@ export async function listCurrentBalancesForActiveEmployees(
       employeeId: employee.id,
       employeeCode: employee.employeeCode,
       name: employee.name,
+      email: employee.email,
+      phone: employee.phone,
       roleName: employee.role.name,
+      designation: employee.designation,
       department: employee.department,
       homeOutlet: employee.homeOutlet?.name ?? null,
+      walletLimit: employee.walletLimit,
+      otpEnabled: employee.otpEnabled,
+      grade: employee.grade,
+      dateOfJoining: employee.dateOfJoining,
+      walletValidFrom: employee.walletValidFrom,
+      walletValidTo: employee.walletValidTo,
       allowance,
       used,
       remaining: allowance - used,

@@ -1,5 +1,27 @@
+import { Platform } from "react-native";
 import * as SecureStore from "expo-secure-store";
 import * as Crypto from "expo-crypto";
+
+// expo-secure-store has no real web implementation (its web module is an
+// empty stub - calling any method on it throws) since there's no OS
+// keychain/keystore equivalent in a browser. Falls back to localStorage on
+// web: weaker at-rest guarantees (no OS-level encryption), but this is the
+// same trust model any ordinary website already relies on for a session
+// token, and it keeps every caller below unaware of the platform split.
+const store = {
+  async getItemAsync(key: string): Promise<string | null> {
+    if (Platform.OS === "web") return window.localStorage.getItem(key);
+    return SecureStore.getItemAsync(key);
+  },
+  async setItemAsync(key: string, value: string): Promise<void> {
+    if (Platform.OS === "web") return window.localStorage.setItem(key, value);
+    await SecureStore.setItemAsync(key, value);
+  },
+  async deleteItemAsync(key: string): Promise<void> {
+    if (Platform.OS === "web") return window.localStorage.removeItem(key);
+    await SecureStore.deleteItemAsync(key);
+  },
+};
 
 const KEYS = {
   sessionToken: "toit.sessionToken",
@@ -18,15 +40,15 @@ export interface CachedIdentity {
 // --- session token -----------------------------------------------------
 
 export async function saveSessionToken(token: string) {
-  await SecureStore.setItemAsync(KEYS.sessionToken, token);
+  await store.setItemAsync(KEYS.sessionToken, token);
 }
 
 export async function loadSessionToken(): Promise<string | null> {
-  return SecureStore.getItemAsync(KEYS.sessionToken);
+  return store.getItemAsync(KEYS.sessionToken);
 }
 
 export async function clearSessionToken() {
-  await SecureStore.deleteItemAsync(KEYS.sessionToken);
+  await store.deleteItemAsync(KEYS.sessionToken);
 }
 
 // --- device id -----------------------------------------------------------
@@ -35,13 +57,13 @@ export async function clearSessionToken() {
 // useful for "sign out this device" / lost-phone flows later.
 
 export async function getOrCreateDeviceId(): Promise<string> {
-  const existing = await SecureStore.getItemAsync(KEYS.deviceId);
+  const existing = await store.getItemAsync(KEYS.deviceId);
   if (existing) return existing;
   const bytes = await Crypto.getRandomBytesAsync(16);
   const id = Array.from(bytes)
     .map((b) => b.toString(16).padStart(2, "0"))
     .join("");
-  await SecureStore.setItemAsync(KEYS.deviceId, id);
+  await store.setItemAsync(KEYS.deviceId, id);
   return id;
 }
 
@@ -65,11 +87,11 @@ export async function getOrCreateDeviceId(): Promise<string> {
 
 export async function saveIdentityCache(identity: Omit<CachedIdentity, "cachedAt">) {
   const payload: CachedIdentity = { ...identity, cachedAt: new Date().toISOString() };
-  await SecureStore.setItemAsync(KEYS.identityCache, JSON.stringify(payload));
+  await store.setItemAsync(KEYS.identityCache, JSON.stringify(payload));
 }
 
 export async function loadIdentityCache(): Promise<CachedIdentity | null> {
-  const raw = await SecureStore.getItemAsync(KEYS.identityCache);
+  const raw = await store.getItemAsync(KEYS.identityCache);
   if (!raw) return null;
   try {
     return JSON.parse(raw) as CachedIdentity;
@@ -79,7 +101,7 @@ export async function loadIdentityCache(): Promise<CachedIdentity | null> {
 }
 
 export async function clearIdentityCache() {
-  await SecureStore.deleteItemAsync(KEYS.identityCache);
+  await store.deleteItemAsync(KEYS.identityCache);
 }
 
 export async function clearAllAuthData() {

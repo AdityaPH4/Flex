@@ -111,6 +111,14 @@ h2 { font-size: 15px; font-weight: 600; margin: 0; }
   color: var(--danger);
   font-size: 13px;
   margin: 10px 0 0;
+  white-space: pre-line;
+}
+
+.error:not(:empty) {
+  background: rgba(224, 104, 90, 0.1);
+  border-left: 3px solid var(--danger);
+  border-radius: var(--radius-sm);
+  padding: 10px 14px;
 }
 
 /* ---------------- App shell / sidebar ---------------- */
@@ -237,6 +245,25 @@ h2 { font-size: 15px; font-weight: 600; margin: 0; }
   margin: 0 0 14px;
 }
 
+.search-input {
+  display: block;
+  width: 100%;
+  max-width: 320px;
+  height: 42px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--card-border);
+  background: var(--bg-elevated);
+  color: var(--text-primary);
+  padding: 0 14px;
+  font-size: 14px;
+  margin-bottom: 16px;
+}
+
+.search-input:focus {
+  outline: none;
+  border-color: var(--gold-border);
+}
+
 /* ---------------- Buttons ---------------- */
 
 .primary-button, .secondary-button {
@@ -333,6 +360,31 @@ tbody tr:not(:last-child) td { border-bottom: 1px solid var(--card-border); }
   gap: 10px;
   margin-bottom: 14px;
 }
+
+.subtab-row {
+  display: flex;
+  gap: 4px;
+  margin-bottom: 14px;
+  background: var(--bg);
+  border-radius: var(--radius-sm);
+  padding: 4px;
+  width: fit-content;
+}
+
+.subtab {
+  border: none;
+  background: transparent;
+  color: var(--text-secondary);
+  font-size: 13px;
+  font-family: inherit;
+  padding: 7px 16px;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  transition: background 0.12s, color 0.12s;
+}
+
+.subtab:hover { color: var(--text-primary); }
+.subtab.active { background: var(--gold-soft); color: var(--gold); font-weight: 500; }
 
 #transactions-load-more, #codes-load-more { margin-top: 12px; }
 

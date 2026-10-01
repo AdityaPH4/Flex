@@ -67,8 +67,9 @@ export const api = {
 
   recordTransaction: (params: {
     amount: number;
+    cashAmount?: number;
     outletName?: string;
-    items?: { name: string; amount: number }[];
+    billNo?: string;
     notes?: string;
     idempotencyKey: string;
   }) =>
@@ -77,8 +78,11 @@ export const api = {
       { method: "POST", body: params }
     ),
 
-  createReconciliationCode: () =>
-    request<ReconciliationCodeResponse>("/api/me/benefits/reconciliation-code", { method: "POST" }),
+  createReconciliationCode: (params: { transactionId: string }) =>
+    request<ReconciliationCodeResponse>("/api/me/benefits/reconciliation-code", {
+      method: "POST",
+      body: params,
+    }),
 };
 
 export { ApiError };

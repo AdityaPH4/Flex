@@ -1,4 +1,5 @@
 import React, { createContext, useContext, useEffect, useState, useCallback } from "react";
+import { Platform } from "react-native";
 import { GoogleSignin, isSuccessResponse } from "@react-native-google-signin/google-signin";
 import { api, setAuthToken, ApiError } from "../api/client";
 import type { EmployeeProfile } from "../api/types";
@@ -12,9 +13,16 @@ import {
   type CachedIdentity,
 } from "./secureCache";
 
-GoogleSignin.configure({
-  webClientId: process.env.EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID,
-});
+// The native Google Sign-In module has no real web implementation (its web
+// branch is a sponsor-only stub that just throws - see login.tsx for the
+// actual web sign-in path, built on Google's own Identity Services JS SDK).
+// Calling .configure() on web only logs a warning, but there's no reason to
+// even try.
+if (Platform.OS !== "web") {
+  GoogleSignin.configure({
+    webClientId: process.env.EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID,
+  });
+}
 
 interface AuthState {
   isBootstrapping: boolean; // still checking for an existing session on app start
@@ -22,6 +30,9 @@ interface AuthState {
   profile: EmployeeProfile | null;
   cachedIdentity: CachedIdentity | null; // available even offline
   signInWithGoogle: () => Promise<void>;
+  // The web login screen gets its ID token from Google's Identity Services
+  // JS SDK directly, then hands it here to finish the same way native does.
+  signInWithGoogleIdToken: (idToken: string) => Promise<void>;
   logout: () => Promise<void>;
   refreshProfile: () => Promise<void>;
 }
@@ -70,15 +81,13 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     })();
   }, []);
 
-  const signInWithGoogle = useCallback(async () => {
-    await GoogleSignin.hasPlayServices();
-    const response = await GoogleSignin.signIn();
-    if (!isSuccessResponse(response) || !response.data.idToken) {
-      throw new Error("google_sign_in_cancelled");
-    }
-
+  // Shared by both sign-in paths below - native gets its ID token from the
+  // native Google SDK, web gets it from Google's own Identity Services JS
+  // SDK (see login.tsx) - but everything from here on (session, profile,
+  // offline identity cache) is identical either way.
+  const completeSignIn = useCallback(async (idToken: string) => {
     const deviceId = await getOrCreateDeviceId();
-    const { token } = await api.googleSignIn({ idToken: response.data.idToken, deviceId });
+    const { token } = await api.googleSignIn({ idToken, deviceId });
     await saveSessionToken(token);
     setAuthToken(token);
 
@@ -99,6 +108,15 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     });
     setIsAuthenticated(true);
   }, []);
+
+  const signInWithGoogle = useCallback(async () => {
+    await GoogleSignin.hasPlayServices();
+    const response = await GoogleSignin.signIn();
+    if (!isSuccessResponse(response) || !response.data.idToken) {
+      throw new Error("google_sign_in_cancelled");
+    }
+    await completeSignIn(response.data.idToken);
+  }, [completeSignIn]);
 
   const logout = useCallback(async () => {
     try {
@@ -142,6 +160,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         profile,
         cachedIdentity,
         signInWithGoogle,
+        signInWithGoogleIdToken: completeSignIn,
         logout,
         refreshProfile,
       }}

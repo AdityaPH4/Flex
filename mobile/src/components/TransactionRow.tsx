@@ -1,7 +1,7 @@
 import React from "react";
-import { View, Text, StyleSheet } from "react-native";
+import { View, Text, StyleSheet, Pressable } from "react-native";
 import { UtensilsCrossed } from "lucide-react-native";
-import { colors, radii, spacing, type as t } from "../theme/tokens";
+import { colors, radii, spacing, shadows, type as t } from "../theme/tokens";
 import type { Transaction } from "../api/types";
 
 function formatRelativeDay(iso: string): string {
@@ -17,18 +17,30 @@ function formatRelativeDay(iso: string): string {
   return date.toLocaleDateString(undefined, { month: "short", day: "numeric" });
 }
 
-export function TransactionRow({ transaction }: { transaction: Transaction }) {
+export function TransactionRow({
+  transaction,
+  onPress,
+}: {
+  transaction: Transaction;
+  onPress?: () => void;
+}) {
+  const Wrapper = onPress ? Pressable : View;
   return (
-    <View style={styles.row}>
+    <Wrapper style={styles.row} onPress={onPress}>
       <View style={styles.iconBox}>
-        <UtensilsCrossed size={18} color={colors.textPrimary} />
+        <UtensilsCrossed size={18} color={colors.goldText} />
       </View>
-      <View style={styles.middle}>
+      <View style={styles.nameBlock}>
         <Text style={styles.outlet}>{transaction.outlet}</Text>
         <Text style={styles.day}>{formatRelativeDay(transaction.occurredAt)}</Text>
       </View>
+      <View style={styles.otpBlock}>
+        {transaction.reconciliationCode ? (
+          <Text style={styles.otp}>{transaction.reconciliationCode}</Text>
+        ) : null}
+      </View>
       <Text style={styles.amount}>₹{transaction.amount}</Text>
-    </View>
+    </Wrapper>
   );
 }
 
@@ -43,11 +55,12 @@ const styles = StyleSheet.create({
     width: 40,
     height: 40,
     borderRadius: radii.sm,
-    backgroundColor: colors.bgElevated,
+    backgroundColor: colors.goldSoft,
     alignItems: "center",
     justifyContent: "center",
+    ...shadows.row,
   },
-  middle: {
+  nameBlock: {
     flex: 1,
   },
   outlet: {
@@ -58,6 +71,19 @@ const styles = StyleSheet.create({
     ...t.caption,
     color: colors.textMuted,
     marginTop: 2,
+  },
+  // Fixed width (not flex) so the OTP column lines up the same way on every
+  // row, regardless of how long the outlet name or the amount next to it
+  // is - codes are always 6 digits, so a fixed width is exact, not a guess.
+  otpBlock: {
+    width: 72,
+    alignItems: "center",
+  },
+  otp: {
+    ...t.bodyMedium,
+    fontWeight: "700",
+    color: colors.goldText,
+    letterSpacing: 1,
   },
   amount: {
     ...t.bodyMedium,
