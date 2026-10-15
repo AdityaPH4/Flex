@@ -10,7 +10,6 @@ export const env = {
   databaseUrl: required("DATABASE_URL"),
   jwtSecret: required("JWT_SECRET"),
   sessionTtlDays: Number(process.env.SESSION_TTL_DAYS ?? 30),
-  reconciliationCodeTtlSeconds: Number(process.env.RECONCILIATION_CODE_TTL_SECONDS ?? 300),
 
   // Google Sign-In: the "Web application" OAuth client ID from Google Cloud
   // Console (not the Android client) - used as the audience when verifying

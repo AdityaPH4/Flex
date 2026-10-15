@@ -1,11 +1,11 @@
 # TOIT Employee Benefits
 
-A from-scratch employee benefits app: employees authenticate with phone + OTP,
-see their monthly benefit allowance and remaining balance (calculated by the
-backend, never the client), record benefit usage, and can generate a short
-numeric reference code to hand the cashier at checkout, who types it into
-Digitory (TOIT's POS). Digitory handles the actual payment; our code exists
-so TOIT can later match a Digitory transaction back to the employee who made it.
+A from-scratch employee benefits app: employees sign in with Google, see their
+monthly benefit allowance and remaining balance (calculated by the backend,
+never the client), and record a payment by entering the **bill number** (and
+amount) from the bill they paid at an outlet. Digitory (TOIT's POS) handles the
+actual payment; the bill number is what later ties a Digitory transaction back
+to the employees who paid it.
 
 ```
    iOS App (Expo)
@@ -188,42 +188,41 @@ needing EAS at all.
   `req.body.employeeId` is never trusted, only `req.auth.employeeId` from the
   verified token (see `backend/src/middleware/auth.ts`). This part has
   nothing to do with Digitory.
-- **The reference code is bookkeeping at the checkout moment, not a security
-  mechanism.** Tapping "Get Code" on the Benefits screen asks the backend to
-  generate a short 6-digit code (unique within the calendar month it was
-  issued in, not globally - see `periodKey` on `ReconciliationCode`) and
-  store it against the employee's ID and name, with a timestamp. The
-  employee reads it aloud, the cashier types it into Digitory, and
-  **Digitory processes the actual payment from there** - our backend never
-  calls Digitory and Digitory never calls us, and nothing verifies or
-  consumes the code in real time at the point of sale.
-- **The cashier screen shows each payment the moment its code is generated.**
-  The cashier doesn't have to catch the code by ear: a screen at the till
-  (`/cashier`, see "Cashier screen" below) pops up the amount, the employee
-  and any cash to collect as soon as the code exists, so the cashier can
-  check the amount against the bill and then type the code into Digitory. It
-  keeps each payment on its live board for 10 minutes and has an "All
-  Transactions" tab for the rest of the day. It is read-only - it changes
-  nothing and verifies nothing; Digitory is still updated by hand.
-- **Reconciling later IS automated, once Digitory's ledger carries this
-  code.** `POST /api/admin/reconcile` matches an admin-uploaded Digitory
-  ledger export against the `ReconciliationCode` table by code (scoped to
-  the month each ledger row's own date falls in) and "squares off" the
-  amount against the linked `BenefitTransaction` - a row is only reconciled
-  if both the code matches AND the amount agrees; a mismatch, an unlinked
-  code, or a code that isn't found at all is flagged into an "unreconciled"
-  bucket with a specific reason instead. The admin dashboard's Reconcile
-  page shows both as separate tabs. The real ledger sample on hand
-  (`data/Ledgers-7.csv`) doesn't have this code column yet - the column
-  name is guessed from candidates (`OTP_CANDIDATES` in
-  `backend/public/admin/app.js`) until a real sample confirms it. See the
-  comment on the `ReconciliationCode` model for the full reasoning.
+- **The bill number is the key - there is no code any more.** An employee
+  enters the outlet, amount and a **mandatory bill number**, confirms, and
+  that's it: the payment is recorded against the bill number. Nothing is
+  generated, read aloud or typed into Digitory by us, and our backend never
+  calls Digitory (nor Digitory us). Several employees can pay the same bill,
+  each from their own allowance (a table splitting one bill): each is a
+  separate payment sharing one bill number. (The old 6-digit reference code
+  flow was removed on the `bill-no-workflow` branch; the `ReconciliationCode`
+  table and any existing codes are left alone.)
+- **The cashier screen shows one card per bill.** A screen at the till
+  (`/cashier`, see "Cashier screen" below) shows each bill as soon as someone
+  pays (part of) it: the bill number, the bill's total across everyone who
+  paid, each payer's share and any cash to collect. When a second or third
+  person pays the same bill, the same card updates. It keeps each bill on its
+  live board for 10 minutes and has an "All Transactions" tab for the rest of
+  the day. It is read-only - it changes nothing and verifies nothing.
+- **Reconciling later is automated, by bill number.** `POST
+  /api/admin/reconcile` matches an admin-uploaded Digitory ledger export
+  against our payments by bill number (within the month of each ledger row's
+  own date). Ledger rows for one bill + wallet are added up and compared with
+  what that employee paid on that bill (the allowance part - cash never
+  reaches the wallet ledger); a row without a wallet number is compared with
+  the whole bill. Bill not found, a wallet that didn't pay it, an amount
+  mismatch, or a bill number used at two outlets (each outlet numbers its own
+  bills; the wallet number normally tells them apart) is flagged into an
+  "unreconciled" bucket with a specific reason. The real ledger sample on
+  hand (`data/Ledgers-7.csv`) predates this and has no bill-number column -
+  the column name is guessed from candidates (`BILL_CANDIDATES` in
+  `backend/public/admin/app.js`) until a real sample confirms it.
 - **Balance enforcement (for the separate "Record Benefit" self-entry flow)
   still happens in one atomic SQL statement.** See `backend/src/lib/spend.ts`
   - the update `used = used + amount WHERE used + amount <= allowance` either
   succeeds atomically or fails with zero rows changed. This is unrelated to
-  the reference-code flow above; it's what runs when an employee manually
-  records a spend in the app, and it's untouched by the Digitory hand-off work.
+  the bill-number flow above; it's what runs when an employee records a spend
+  in the app (a leaving employee's cap is prorated, see `lib/lastDay.ts`).
 - **Offline identity cache is minimal on purpose.** The phone caches only
   `{ name, employeeCode }` in the OS Keychain/Keystore (via `expo-secure-store`),
   written only right after a successful authenticated `/api/me` call - never
@@ -233,16 +232,16 @@ needing EAS at all.
 
 ## Known MVP simplifications (worth revisiting before real production use)
 
-- **Digitory's real ledger export doesn't have the code column yet.**
-  `POST /api/admin/reconcile` already does automated code+amount matching
+- **Digitory's real ledger export hasn't been seen with a bill-number
+  column.** `POST /api/admin/reconcile` does automated bill-number matching
   (see "How the Digitory hand-off flow works" above), but it's only been
-  verified against hand-built test data - the actual column name and
-  format should be confirmed against a real export once Digitory adds it.
-- **The reference code has no real expiry enforcement.** `expiresAt` on
-  `ReconciliationCode` is informational only (drives what the app displays);
-  nothing rejects a code after that time, since nothing verifies the code at
-  all. If Digitory later exposes a real API contract, this is one of the
-  first things worth tightening.
+  verified against hand-built test data - the actual column name and format
+  should be confirmed against a real export.
+- **Bill numbers are only as unique as the outlet's numbering.** Two outlets
+  can both have a bill 1001 in a month; the wallet number in the ledger row
+  disambiguates, otherwise the row is flagged, not guessed. Nothing stops two
+  employees (or one, twice) from entering the same bill number - that is the
+  split-bill case - so a typo'd bill number simply won't reconcile.
 - **No self-serve account linking.** An employee's Google account must match
   the `email` HR/admin set on their record ahead of time - there's no flow
   for an employee to register their own email, by design (internal,
@@ -295,13 +294,12 @@ Source: `backend/src/routes/admin.ts` (API) and `backend/public/admin/`
 
 ## Cashier screen
 
-A screen meant to stay open on a tablet at the till. Every time an employee
-records a payment, the app generates the 6-digit code (the "OTP") against it;
-the moment that code exists, this screen pops up a card with the **total
-amount**, the employee's **name and ID**, the **outlet and bill number**, how
-much came **from the allowance** and how much **cash to collect** (if the bill
-was split), and the **code** to type into Digitory. The cashier checks the
-amount against the bill and types the code into Digitory.
+A screen meant to stay open on a tablet at the till. When an employee pays
+(part of) a bill, the screen shows one card for that **bill number**: the bill's
+**total**, each payer's **name, ID and share**, the **outlet**, and how much
+**cash to collect** (if anyone's share was split). When more employees pay the
+same bill, the same card updates with the new total and payer. The cashier
+checks the amounts against the bill.
 
 **URL:** `https://<server>/cashier/` (served by the backend, same as `/admin`).
 
@@ -318,22 +316,22 @@ that outlet appear, on both tabs below.
 
 **Two tabs** (the control sits just before "Sign out"):
 
-- **Live payments** - a 2x2 board: four cards fill the screen, a fifth and
-  beyond scroll in. A payment stays for **10 minutes** from the moment its code
-  was generated and then drops off by itself; "Got it" clears a card sooner.
-  The length is `LIVE_WINDOW_MS` in `backend/src/routes/cashier.ts` (the screen
-  reads it from the `windowSeconds` field of the feed). The screen asks
-  `GET /api/cashier/payments` once a second (each poll covers the last minute
-  and de-duplicates, so a late-committing row isn't missed). A payment that has
-  no code yet doesn't appear - the card is triggered by the code being
-  generated. The tab shows a count of what is on the board.
+- **Live payments** - a 2x2 board of **bills**: four cards fill the screen, a
+  fifth and beyond scroll in. One bill number at one outlet is one card, however
+  many employees paid it. A bill stays for **10 minutes** from its latest
+  payment and then drops off by itself; "Got it" clears a card sooner (and it
+  comes back if someone else then pays that bill). The length is
+  `LIVE_WINDOW_MS` in `backend/src/routes/cashier.ts` (the screen reads it
+  from the `windowSeconds` field of the feed). The screen asks
+  `GET /api/cashier/payments` once a second (each poll covers the last minute;
+  a bill that gets a new payer comes back whole, and the screen replaces its
+  card). The tab shows a count of what is on the board.
 - **All Transactions** - every payment recorded today, newest first
   (`GET /api/cashier/transactions`). "Today" is the **IST calendar day**
   (midnight to midnight India time - the server runs on UTC, see
-  `backend/src/lib/istDay.ts`). A search box filters by employee **name or
-  employee code**; several words must all match (`rahul 9001`). Unlike the live
-  board it also lists a payment that never got a code (shown as "No code");
-  voided payments are left out. It refreshes by itself every 15 seconds and as
+  `backend/src/lib/istDay.ts`). One row per employee payment. A search box
+  filters by employee **name, employee code or bill number**; several words
+  must all match (`rahul 9001`). Voided payments are left out. It refreshes by itself every 15 seconds and as
   soon as a new payment arrives, and a banner says so if payments are waiting
   on the live board while the cashier browses.
 
@@ -358,18 +356,17 @@ Source: `backend/src/routes/cashier.ts` (API) and `backend/public/cashier/`
 | GET | `/api/me/benefits/current` | employee | Current month allowance/used/remaining |
 | GET | `/api/me/benefits/transactions` | employee | Paginated transaction history |
 | POST | `/api/me/benefits/transactions` | employee | Self-record a benefit spend (balance-enforced) |
-| POST | `/api/me/benefits/reconciliation-code` | employee | Generate a numeric reference code for Digitory |
 | POST | `/api/admin/login` | - | Admin login (shared password) |
 | GET | `/api/admin/overview` | admin | Aggregate stats across all employees |
 | GET | `/api/admin/employees` | admin | Every active employee's current balance (allowance already prorated for someone leaving this month) |
 | POST | `/api/admin/employees/:employeeCode/revoke-balance` | admin | Take back this month's remaining balance of an employee who has an LWD (last working day) from the roster upload |
 | GET | `/api/admin/transactions` | admin | Every benefit transaction, paginated |
-| GET | `/api/admin/reconciliation-codes` | admin | Every Digitory reference code, paginated |
-| POST | `/api/admin/reconcile` | admin | Upload a Digitory ledger export, match by code, square off amounts |
+| GET | `/api/admin/reconciliation-codes` | admin | Old reference codes (from before the bill-number workflow), paginated |
+| POST | `/api/admin/reconcile` | admin | Upload a Digitory ledger export, match by bill number, square off amounts |
 | POST | `/api/cashier/login` | - | Cashier screen login (shared password) |
 | GET | `/api/cashier/outlets` | cashier | The outlets a till can be set to |
-| GET | `/api/cashier/payments` | cashier | Payments whose code was generated in the last 10 minutes - the live board (`outlet`, `since`, `limit`) |
-| GET | `/api/cashier/transactions` | cashier | Every confirmed payment since midnight IST, newest first, with its code if it has one (`outlet`) |
+| GET | `/api/cashier/payments` | cashier | Bills paid in the last 10 minutes, one entry per bill with all its payers - the live board (`outlet`, `since`, `limit`) |
+| GET | `/api/cashier/transactions` | cashier | Every confirmed payment since midnight IST, newest first (`outlet`) |
 
 "employee" auth = `Authorization: Bearer <employee session token>`.
 "admin" auth = `Authorization: Bearer <admin token>` (from `/api/admin/login`) -
@@ -378,8 +375,6 @@ accepted on admin routes and vice versa. "cashier" auth is a third, separate
 token type (from `/api/cashier/login`): it works only on `/api/cashier/*`, and
 neither an employee nor an admin token is accepted there.
 
-Note: Digitory calls its own reconciliation field "OTP" too, but
-`/api/me/benefits/reconciliation-code` is unrelated to login - it's only a
-reference number for Digitory and proves nothing on its own. Login now goes
-through `/auth/google/verify` instead.
+Note: login goes through `/auth/google/verify`. Digitory's own "OTP" wallet
+flag (`enable_otp` in the roster file) is unrelated to anything we generate.
 # Flex

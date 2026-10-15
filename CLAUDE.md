@@ -19,43 +19,34 @@ and things to be careful not to break.
   at `/admin`
 - `backend/public/cashier/` — the till-side **cashier screen**, same approach
   (static page at `/cashier`, API in `backend/src/routes/cashier.ts`). It
-  shows each payment the moment its Digitory reference code is generated, so
-  the cashier can check the amount (and collect any cash part) before typing
-  the code into Digitory. Two tabs: a 2x2 "Live payments" board that keeps each
-  payment for 10 minutes, and "All Transactions" (today, IST day, searchable by
-  name/employee code). Read-only: it doesn't change decision 1 below - the
-  code is still just a reconciliation key and Digitory is still updated by
-  hand. Shared `CASHIER_PASSWORD` login, like the admin dashboard. The outlet
+  shows each BILL as one card (every employee who paid part of that bill, the
+  bill total, any cash to collect) so the cashier can check the amounts. Two
+  tabs: a 2x2 "Live payments" board that keeps each bill for 10 minutes, and
+  "All Transactions" (today, IST day, searchable by name/employee code/bill
+  no). Read-only: Digitory is still updated by hand. Shared `CASHIER_PASSWORD` login, like the admin dashboard. The outlet
   list it offers (`backend/src/lib/outlets.ts`) must stay in sync with
   `OUTLETS` in `mobile/app/record-benefit.tsx`.
 
 ## Non-obvious decisions — don't relitigate these without asking the person first
 
-1. **The Digitory reference code is NOT a real-time verification/auth
-   mechanism, but it now IS the automated reconciliation key.** It's a
-   6-digit code we generate and store against an employee (scoped unique
-   per calendar month via `periodKey` - see below), read aloud to the
-   cashier at checkout. Nothing changed about the checkout moment itself:
-   our backend never calls Digitory, Digitory never calls us, and nothing
-   verifies/consumes the code in real time - Digitory processes the payment
-   independently, with no live round-trip to this app. **What changed**
-   (an explicit, later decision - this was originally "manual
-   cross-reference only, don't build automated matching without being
-   asked," and they've since asked): once Digitory's own ledger export
-   carries this code, `POST /admin/reconcile` (`backend/src/routes/
-   admin.ts`) automatically matches uploaded ledger rows against
-   `ReconciliationCode` by code+month and "squares off" the amount against
-   the linked `BenefitTransaction` - reconciled only if both the code AND
-   the amount agree; anything else (code not found, not linked to a
-   transaction, or an amount mismatch) is flagged into an "unreconciled"
-   bucket with a specific reason, shown in the admin dashboard's Reconcile
-   page as two tabs. The real ledger sample we have (`data/Ledgers-7.csv`)
-   does NOT yet have this code column - the frontend guesses candidate
-   column names for it (`OTP_CANDIDATES` in `backend/public/admin/app.js`,
-   same pattern as the old column-guessing for the wallet ledger before
-   its format was confirmed) until a real sample with the actual column
-   name shows up. See `ReconciliationCode` model comment in `schema.prisma`
-   and the "How the Digitory hand-off flow works" section of `README.md`.
+1. **Payments are keyed by BILL NUMBER; there is no reference code any more
+   (branch `bill-no-workflow`).** An explicit, later decision superseding the
+   earlier 6-digit-code flow: the employee enters outlet + amount + a
+   **mandatory bill number**, confirms, done - nothing is generated or read
+   aloud. Our backend never calls Digitory and Digitory never calls us;
+   Digitory processes the payment independently. Several employees can pay one
+   bill (each from their own allowance): the cashier screen shows ONE card per
+   (outlet, bill number) with the bill's total and every payer, and
+   `POST /admin/reconcile` (`backend/src/routes/admin.ts`) matches an uploaded
+   Digitory ledger against our payments by bill number within the month of
+   each ledger row's date - ledger rows for one bill + wallet are summed and
+   squared off against what that employee paid on that bill (allowance part
+   only); bill not found / wallet didn't pay it / amount mismatch / bill number
+   at two outlets are flagged with a specific reason. The ledger's bill-number
+   column name is guessed (`BILL_CANDIDATES` in `backend/public/admin/app.js`)
+   until Digitory's real export confirms it. The `ReconciliationCode` table,
+   its admin list endpoint and any old codes are left in place (history), but
+   nothing creates codes. Don't reintroduce the code flow without asking.
 
 2. **Login is Google Sign-In, not phone/OTP.** The original phone + SMS OTP
    login (`/auth/otp/*`) was replaced with Google Sign-In
@@ -69,9 +60,8 @@ and things to be careful not to break.
    worked — testing requires seeding a real Gmail address in `seed.ts` that
    whoever is testing can actually sign in with. See
    `backend/src/lib/googleAuth.ts` and `backend/src/routes/auth.ts`.
-   The Digitory reconciliation code (item 1 above) is unrelated to any of
-   this — Digitory calls its own field "OTP" too, which is a naming
-   coincidence, not a shared mechanism. Don't conflate them.
+   Digitory's own "OTP" wallet flag (`enable_otp` in the roster) is unrelated
+   to login. Don't conflate them.
 
 3. **Balance enforcement is a single atomic SQL UPDATE**, not
    read-then-write. See `backend/src/lib/spend.ts`. This is intentional and
@@ -103,7 +93,7 @@ and things to be careful not to break.
    an explicit product requirement, not a bug. See `backend/src/lib/period.ts`.
 
 7. **The reconciliation CSV import guesses Digitory's column names** (see
-   `CODE_CANDIDATES` etc. in `backend/public/admin/app.js`) because the
+   `BILL_CANDIDATES` in `backend/public/admin/app.js`) because the
    person has never gotten Digitory's actual export format confirmed. If
    they get real documentation from Digitory, update the candidate lists
    rather than assuming the column names are fixed.
@@ -186,12 +176,10 @@ and things to be careful not to break.
   The admin dashboard's Import/Export still match the real external
   wallet/POS system's own file formats (`data/Register Master-Wallet.xlsx`
   for the monthly HR upload) - see `backend/src/routes/admin.ts`.
-  **Reconcile is different now: it's back to code-based matching (see item
-  1), not wallet number.** The wallet-number-by-`Ledgers-7.csv` version
-  (adopted only because that sample had no code column) is commented out
-  in `admin.ts`, not deleted, in case a mixed/fallback approach is ever
-  wanted again - don't revive it as the primary mechanism without asking,
-  same as any other "supersede a superseded thing" flip in this file.
+  **Reconcile is by bill number (see item 1).** The older code-based and
+  wallet-number-by-`Ledgers-7.csv` versions are commented out in `admin.ts` or
+  in git history, not live - don't revive them as the primary mechanism
+  without asking.
 - **Import is all-or-nothing - every column is required on every row, no
   exceptions.** An explicit decision (superseding an earlier one where only
   `email_id` was required and other columns were optional/nullable). The

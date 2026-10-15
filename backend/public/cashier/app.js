@@ -1,18 +1,20 @@
 /*
  * Cashier screen. Meant to stay open on a tablet at the till.
  *
- * Every payment an employee records ends with a 6-digit code being generated
- * on their phone (that is the "OTP"). This screen asks the backend for new
- * codes about once a second and pops each one up the moment it exists, so the
- * cashier can check the amount against the bill (and collect any cash part)
- * before typing the code into Digitory.
+ * When an employee pays (part of) a bill from their phone, the payment is
+ * recorded against the bill number they entered. This screen asks the backend
+ * for bills about once a second and shows each bill as ONE card - when
+ * several employees split one bill, they all appear on the same card with the
+ * bill's total - so the cashier can check the amounts against the bill (and
+ * collect any cash part).
  *
  * Two tabs:
- *   - Live payments: a 2x2 board of the payments from the last 10 minutes (the
- *     server sends the exact length as windowSeconds). Older ones drop off by
- *     themselves; "Got it" clears one early.
- *   - All Transactions: everything recorded today (the IST calendar day),
- *     searchable by employee name or employee code.
+ *   - Live payments: a 2x2 board of the bills paid in the last 10 minutes (the
+ *     server sends the exact length as windowSeconds; it runs from a bill's
+ *     latest payer). Older ones drop off by themselves; "Got it" clears one
+ *     early, and it comes back if someone else then pays the same bill.
+ *   - All Transactions: every payment recorded today (the IST calendar day),
+ *     one row per employee, searchable by name, employee code or bill number.
  *
  * Read-only: nothing here changes or verifies a payment. "Got it" only hides
  * a card on this device (remembered in localStorage).
@@ -117,9 +119,6 @@
 
   const rupees = (n) =>
     "₹" + Number(n).toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-
-  const formatCode = (code) =>
-    typeof code === "string" && code.length === 6 ? code.slice(0, 3) + " " + code.slice(3) : code;
 
   const nowMs = () => Date.now() + state.skewMs;
 
@@ -245,52 +244,65 @@
 
   // ---------- live payments ----------
 
-  const isFresh = (p) => nowMs() - p.createdMs < FRESH_MS;
-  // On the board = young enough and not cleared with "Got it".
-  const onBoard = (p) => !state.seen.has(p.id) && nowMs() - p.createdMs < state.windowMs;
+  const isFresh = (b) => nowMs() - b.lastMs < FRESH_MS;
+  // Cleared per head-count: if another person pays the same bill afterwards the
+  // bill is a different "state" and comes back onto the board.
+  const seenKey = (b) => b.id + "#" + b.payments.length;
+  // On the board = a payer in the last window and not cleared with "Got it".
+  const onBoard = (b) => !state.seen.has(seenKey(b)) && nowMs() - b.lastMs < state.windowMs;
+  const MAX_PAYER_ROWS = 3; // more people than this: the first ones, then "+N more"
 
-  function buildAlert(p) {
-    const card = el("article", "alert" + (isFresh(p) ? " fresh" : "") + (p.cashAmount > 0 ? "" : " no-split"));
-    card.dataset.id = p.id;
+  function buildAlert(b) {
+    const card = el("article", "alert" + (isFresh(b) ? " fresh" : "") + (b.cashAmount > 0 ? "" : " no-split"));
+    card.dataset.id = b.id;
+    card.dataset.sig = b.payments.length + "|" + b.totalAmount;
     // The card is a size container (see styles.css); the padded column inside
     // it holds the content so its text can be sized from the card's own box.
     const inner = el("div", "alert-in");
 
     const head = el("div", "alert-head");
     head.append(el("span", "badge", "New"));
-    const when = el("span", "when", clock(p.createdMs) + " · " + ago(p.createdMs));
-    when.dataset.created = String(p.createdMs);
+    const when = el("span", "when", clock(b.lastMs) + " · " + ago(b.lastMs));
+    when.dataset.created = String(b.lastMs);
     head.append(when);
     inner.append(head);
 
-    inner.append(el("div", "amount", rupees(p.totalAmount)));
+    inner.append(el("div", "amount", rupees(b.totalAmount)));
 
-    const who = el("div", "who");
-    who.append(el("strong", null, p.employeeName), el("span", null, "ID " + p.employeeCode));
-    inner.append(who);
+    const billLine = el("div", "bill-line");
+    billLine.append(el("strong", null, "Bill " + b.billNo), el("span", null, b.outlet || ""));
+    inner.append(billLine);
 
-    const meta = [p.outlet, p.billNo ? "Bill " + p.billNo : null].filter(Boolean).join(" · ");
-    if (meta) inner.append(el("div", "meta", meta));
+    const people = b.payments;
+    const shown = people.length > MAX_PAYER_ROWS ? people.slice(0, MAX_PAYER_ROWS - 1) : people;
+    const payers = el("div", "payers");
+    for (const p of shown) {
+      const row = el("div", "payer");
+      const amount = el("span", "payer-amt", rupees(p.allowanceAmount));
+      if (p.cashAmount > 0) amount.append(el("span", "payer-cash", " + " + rupees(p.cashAmount) + " cash"));
+      row.append(el("span", "payer-name", p.employeeName), el("span", "payer-id", "ID " + p.employeeCode), amount);
+      payers.append(row);
+    }
+    if (shown.length < people.length) {
+      const more = people.length - shown.length;
+      payers.append(el("div", "payers-more", "+ " + more + " more " + (more === 1 ? "person" : "people")));
+    }
+    inner.append(payers);
 
-    if (p.cashAmount > 0) {
-      const split = el("div", "split");
-      const fromAllowance = el("div", "split-row");
-      fromAllowance.append(el("span", null, "From allowance"), el("strong", null, rupees(p.allowanceAmount)));
-      const cash = el("div", "split-row cash");
-      cash.append(el("span", null, "Collect in cash"), el("strong", null, rupees(p.cashAmount)));
-      split.append(fromAllowance, cash);
-      inner.append(split);
+    if (b.cashAmount > 0) {
+      const bar = el("div", "cashbar");
+      bar.append(el("span", null, "Collect in cash"), el("strong", null, rupees(b.cashAmount)));
+      inner.append(bar);
     } else {
-      inner.append(el("div", "nocash", "Paid fully from the allowance. No cash to collect."));
+      inner.append(el("div", "nocash", "Paid fully from allowances. No cash to collect."));
     }
 
     const foot = el("div", "foot");
-    const codeBlock = el("div", "code-block");
-    codeBlock.append(el("span", "code-label", "Code"), el("span", "code", formatCode(p.code)));
+    foot.append(el("span", "foot-note", people.length + (people.length === 1 ? " payer" : " payers")));
     const button = el("button", "btn primary", "Got it");
     button.type = "button";
-    button.addEventListener("click", () => acknowledge(p.id));
-    foot.append(codeBlock, button);
+    button.addEventListener("click", () => acknowledge(b));
+    foot.append(button);
     inner.append(foot);
 
     card.append(inner);
@@ -298,11 +310,14 @@
   }
 
   function renderLive() {
-    const board = [...state.payments.values()].filter(onBoard).sort((a, b) => b.createdMs - a.createdMs);
-    const wanted = new Set(board.map((p) => p.id));
+    const board = [...state.payments.values()].filter(onBoard).sort((a, b) => b.lastMs - a.lastMs);
+    const sigOf = (b) => b.payments.length + "|" + b.totalAmount;
+    const current = new Map(board.map((b) => [b.id, sigOf(b)]));
 
+    // Drop cards that left the board, and cards whose bill changed (another
+    // person paid it): those are rebuilt below so the new payer shows up.
     for (const [id, node] of alertEls) {
-      if (!wanted.has(id)) {
+      if (current.get(id) !== node.dataset.sig) {
         node.remove();
         alertEls.delete(id);
       }
@@ -312,11 +327,11 @@
     // their entrance animation doesn't replay); new ones are slotted in.
     const container = $("alerts");
     let next = container.firstElementChild;
-    for (const p of board) {
-      let node = alertEls.get(p.id);
+    for (const b of board) {
+      let node = alertEls.get(b.id);
       if (!node) {
-        node = buildAlert(p);
-        alertEls.set(p.id, node);
+        node = buildAlert(b);
+        alertEls.set(b.id, node);
       }
       if (node === next) next = next.nextElementSibling;
       else container.insertBefore(node, next);
@@ -327,7 +342,7 @@
     const empty = $("empty");
     empty.classList.toggle("hidden", count > 0);
     empty.textContent =
-      "Waiting for payments.\nEach one stays here for " + windowMinutes() + " minutes. " +
+      "Waiting for payments.\nEach bill stays here for " + windowMinutes() + " minutes. " +
       "Use All Transactions to look up the rest of today.";
 
     const badge = $("live-count");
@@ -339,17 +354,17 @@
 
   // Once a second: let cards age out, and settle the gold "new" look.
   function tick() {
-    for (const [id, p] of state.payments) {
-      if (nowMs() - p.createdMs >= state.windowMs + REMEMBER_AFTER_EXPIRY_MS) state.payments.delete(id);
+    for (const [id, b] of state.payments) {
+      if (nowMs() - b.lastMs >= state.windowMs + REMEMBER_AFTER_EXPIRY_MS) state.payments.delete(id);
     }
     let rerender = false;
     for (const [id, node] of alertEls) {
-      const p = state.payments.get(id);
-      if (!p || !onBoard(p)) {
+      const b = state.payments.get(id);
+      if (!b || !onBoard(b)) {
         rerender = true;
         break;
       }
-      if (node.classList.contains("fresh") && !isFresh(p)) node.classList.remove("fresh");
+      if (node.classList.contains("fresh") && !isFresh(b)) node.classList.remove("fresh");
     }
     if (rerender) renderLive();
   }
@@ -366,8 +381,8 @@
     $("status-text").textContent = kind === "live" ? "Live" : "Reconnecting…";
   }
 
-  function acknowledge(id) {
-    state.seen.add(id);
+  function acknowledge(b) {
+    state.seen.add(seenKey(b));
     store.set(KEYS.seen, JSON.stringify([...state.seen].slice(-SEEN_CAP)));
     renderLive();
   }
@@ -379,19 +394,22 @@
     let changed = false;
 
     // The server sends newest first; walk oldest first so cards arrive in order.
-    for (const p of [...list].reverse()) {
-      if (state.payments.has(p.id)) continue;
-      p.createdMs = Date.parse(p.createdAt);
+    for (const b of [...list].reverse()) {
+      b.lastMs = Date.parse(b.lastAt);
       // Already too old for the board (the server filters too; this covers
       // clock edge cases) - nothing to show or announce.
-      if (serverMs - p.createdMs >= state.windowMs) continue;
-      state.payments.set(p.id, p);
+      if (serverMs - b.lastMs >= state.windowMs) continue;
+      // A bill comes back on every poll that covers one of its payments;
+      // only a different set of payers is news.
+      const prev = state.payments.get(b.id);
+      if (prev && prev.payments.length === b.payments.length && prev.totalAmount === b.totalAmount) continue;
+      state.payments.set(b.id, b);
       changed = true;
 
-      if (state.seen.has(p.id)) continue; // cleared earlier, e.g. before a reload
+      if (state.seen.has(seenKey(b))) continue; // cleared earlier, e.g. before a reload
       // A freshly opened screen shows what is still on the board but only
       // announces what is genuinely new.
-      if (state.firstLoadDone || serverMs - p.createdMs < FRESH_MS) fresh.push(p);
+      if (state.firstLoadDone || serverMs - b.lastMs < FRESH_MS) fresh.push(b);
     }
     state.firstLoadDone = true;
 
@@ -467,7 +485,6 @@
     row.append(el("div", "c-total num", rupees(t.totalAmount)));
     row.append(el("div", "c-allow num", rupees(t.allowanceAmount)));
     row.append(el("div", "c-cash num" + (t.cashAmount > 0 ? " has-cash" : ""), t.cashAmount > 0 ? rupees(t.cashAmount) : "—"));
-    row.append(el("div", "c-code" + (t.code ? "" : " none"), t.code ? formatCode(t.code) : "No code"));
     return row;
   }
 
@@ -533,7 +550,7 @@
           list: data.transactions.map((t) => ({
             ...t,
             createdMs: Date.parse(t.createdAt),
-            haystack: (t.employeeName + " " + t.employeeCode).toLowerCase(),
+            haystack: (t.employeeName + " " + t.employeeCode + " " + (t.billNo || "")).toLowerCase(),
           })),
           truncated: !!data.truncated,
           dayStartMs: Date.parse(data.dayStart),

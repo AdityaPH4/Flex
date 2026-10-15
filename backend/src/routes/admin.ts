@@ -573,7 +573,7 @@ adminRouter.get("/reconciliation-codes", async (req, res) => {
  */
 
 const ledgerRowSchema = z.object({
-  otp: z.string().trim().min(1),
+  billNo: z.string().trim().min(1),
   walletNo: z.string().trim().optional(),
   event: z.string().optional(),
   transactionId: z.string().optional(),
@@ -589,22 +589,27 @@ const reconcileSchema = z.object({
   rows: z.array(ledgerRowSchema).min(1).max(5000),
 });
 
-// Matches an admin-uploaded Digitory ledger export against our own
-// ReconciliationCode table by OTP (the 6-digit code generated in
-// routes/me.ts's "read this code to the cashier" flow) - not by wallet
-// number. A row only counts as reconciled if BOTH the code matches AND the
-// ledger's amount agrees with what we recorded for that transaction
-// ("squaring off"); anything else (code not found, code not linked to a
-// transaction, or an amount mismatch) is flagged into the unreconciled
-// bucket with a specific reason, never silently dropped.
+// Matches an admin-uploaded Digitory ledger export against our payments by
+// BILL NUMBER (every payment carries the bill number the employee entered).
+// Several employees can pay one bill, so the amounts are summed: all the
+// ledger rows for one bill + wallet are compared with what that employee paid
+// on that bill in our system (the allowance part - cash never reaches
+// Digitory's wallet ledger). A ledger row with no wallet number is compared
+// with the whole bill. Anything that doesn't square - bill not found, wallet
+// didn't pay it here, amounts differ, bill number used at two outlets - goes
+// to the unreconciled bucket with a specific reason, never silently dropped.
 //
-// Codes are only unique within the calendar month they were issued in (see
-// periodKey on the ReconciliationCode model), so which month's codes to
-// search is taken from each ledger ROW's own Date Time - not from today's
-// date - since reconciliation typically happens after the month it covers
-// has already ended. If a row's date doesn't parse, we fall back to a
-// bare-code lookup and only accept it if that's unambiguous (exactly one
-// match across all months); otherwise it's flagged rather than guessed.
+// A bill number is only trusted within the calendar month of the ledger row's
+// own Date Time (numbers get reused over time, and reconciliation usually
+// happens after the month ended). A row whose date doesn't parse is compared
+// only if its bill number appears in a single month.
+const normBill = (raw: string) => raw.trim().toLowerCase().replace(/^0+(?=\d)/, "");
+const IST_MONTH_OFFSET_MS = 5.5 * 60 * 60 * 1000;
+const monthKeyIST = (d: Date) => {
+  const shifted = new Date(d.getTime() + IST_MONTH_OFFSET_MS);
+  return `${shifted.getUTCFullYear()}-${String(shifted.getUTCMonth() + 1).padStart(2, "0")}`;
+};
+
 adminRouter.post("/reconcile", async (req, res) => {
   const parsed = reconcileSchema.safeParse(req.body);
   if (!parsed.success) {
@@ -613,64 +618,71 @@ adminRouter.post("/reconcile", async (req, res) => {
   const rows = parsed.data.rows;
 
   const rowPeriods = rows.map((row) => {
-    const parsedDate = parseFlexibleDate(row.dateTime);
-    return parsedDate ? `${parsedDate.getFullYear()}-${String(parsedDate.getMonth() + 1).padStart(2, "0")}` : null;
+    const d = parseFlexibleDate(row.dateTime);
+    // The ledger's date is wall-clock text; parseFlexibleDate reads it back in
+    // local time, so local getters return the month as written.
+    return d ? `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}` : null;
   });
 
-  // Codes are generated zero-padded to 6 digits (me.ts), so ~10% of them
-  // legitimately start with one or more zeros. Re-pad here in case whatever
-  // produced the ledger export (e.g. Excel treating a numeric-looking OTP
-  // column as a number) silently dropped a leading zero - without this, a
-  // perfectly valid code like "005234" would never match a ledger value of
-  // "5234".
-  const normalizeOtp = (raw: string) => raw.trim().padStart(6, "0");
-  const codes = [...new Set(rows.map((r) => normalizeOtp(r.otp)))];
-  const found = await prisma.reconciliationCode.findMany({
-    where: { code: { in: codes } },
-    include: { transaction: true },
-  });
-  const byExactKey = new Map(found.map((f) => [`${f.code}|${f.periodKey}`, f]));
-  const byCodeOnly = new Map<string, typeof found>();
-  for (const f of found) {
-    if (!byCodeOnly.has(f.code)) byCodeOnly.set(f.code, []);
-    byCodeOnly.get(f.code)!.push(f);
-  }
+  // Matched on the normalised number in memory (stored bill numbers are as the
+  // employee typed them), narrowed in the query by the plain forms.
+  const bills = [...new Set(rows.map((r) => normBill(r.billNo)))];
+  const ours = (
+    await prisma.benefitTransaction.findMany({
+      where: { status: "confirmed", billNo: { not: null } },
+      include: { employee: { select: { name: true, employeeCode: true } } },
+    })
+  ).filter((t) => bills.includes(normBill(t.billNo!)));
+
+  // Ledger rows for the same bill + wallet are one payment split over several
+  // rows; their amounts add up before they are compared.
+  const groupKey = (i: number) => `${normBill(rows[i].billNo)}|${rowPeriods[i] ?? ""}|${rows[i].walletNo ?? ""}`;
+  const ledgerSum = new Map<string, number>();
+  rows.forEach((r, i) => ledgerSum.set(groupKey(i), (ledgerSum.get(groupKey(i)) ?? 0) + (r.amount ?? 0)));
 
   const results = rows.map((row, i) => {
-    const otp = normalizeOtp(row.otp);
     const period = rowPeriods[i];
+    let candidates = ours.filter((t) => normBill(t.billNo!) === normBill(row.billNo));
+    if (period) candidates = candidates.filter((t) => monthKeyIST(t.createdAt) === period);
 
-    let match: (typeof found)[number] | null = null;
     let reason: string | null = null;
-    if (period) {
-      match = byExactKey.get(`${otp}|${period}`) ?? null;
-      if (!match) reason = "OTP not found in our system for that month.";
+    let mine: typeof candidates = [];
+    if (candidates.length === 0) {
+      reason = period ? "Bill number not found in our system for that month." : "Bill number not found in our system.";
     } else {
-      const candidates = byCodeOnly.get(otp) ?? [];
-      if (candidates.length === 0) reason = "OTP not found in our system.";
-      else if (candidates.length > 1) {
-        reason = "Ambiguous OTP - the ledger row's date didn't parse and this code matches more than one month.";
-      } else match = candidates[0];
-    }
-
-    let reconciled = false;
-    const ourAmount = match?.transaction ? Number(match.transaction.amount) : null;
-    if (match) {
-      if (!match.transaction) {
-        reason = "Code found but not linked to a specific transaction - can't verify amount.";
-      } else if (row.amount == null) {
-        reason = "Ledger row has no amount to compare.";
-      // Compare at cent precision (both sides can now carry 2 decimal
-      // places) rather than rounding to whole rupees first.
-      } else if (Math.round(row.amount * 100) !== Math.round(ourAmount! * 100)) {
-        reason = `Amount mismatch: ledger ₹${row.amount} vs our system ₹${ourAmount}.`;
-      } else {
-        reconciled = true;
+      // Each outlet numbers its own bills, so the same number can exist at two
+      // outlets. The wallet number (when the ledger has one) tells them apart;
+      // without it the row is flagged rather than guessed.
+      mine = row.walletNo ? candidates.filter((t) => t.employee.employeeCode === row.walletNo) : candidates;
+      if (row.walletNo && mine.length === 0) {
+        reason = `Bill found, but wallet ${row.walletNo} did not pay it in our system.`;
+      } else if (new Set(mine.map((t) => t.outletName)).size > 1) {
+        reason = "This bill number was used at more than one outlet - can't tell which one the ledger means.";
+      } else if (!period && new Set(mine.map((t) => monthKeyIST(t.createdAt))).size > 1) {
+        reason = "Ambiguous bill number - the ledger row's date didn't parse and this number appears in more than one month.";
       }
     }
 
+    const ourAmount = mine.length ? roundMoney(mine.reduce((n, t) => n + Number(t.amount), 0)) : null;
+    let reconciled = false;
+    if (!reason && ourAmount != null) {
+      if (row.amount == null) {
+        reason = "Ledger row has no amount to compare.";
+      } else {
+        const ledgerTotal = ledgerSum.get(groupKey(i))!;
+        if (Math.round(ledgerTotal * 100) !== Math.round(ourAmount * 100)) {
+          reason = `Amount mismatch: ledger ₹${roundMoney(ledgerTotal)} vs our system ₹${ourAmount}.`;
+        } else {
+          reconciled = true;
+        }
+      }
+    }
+
+    // Whose payment this is, when it is one person's (a whole-bill row can be several).
+    const onePayer = mine.length > 0 && new Set(mine.map((t) => t.employeeId)).size === 1;
+
     return {
-      otp,
+      billNo: row.billNo.trim(),
       walletNo: row.walletNo ?? null,
       event: row.event ?? null,
       amount: row.amount ?? null,
@@ -680,8 +692,8 @@ adminRouter.post("/reconcile", async (req, res) => {
       status: row.status ?? null,
       reconciled,
       reason,
-      employeeName: match?.employeeName ?? null,
-      employeeCode: match?.employeeCode ?? null,
+      employeeName: onePayer ? mine[0].employee.name : null,
+      employeeCode: onePayer ? mine[0].employee.employeeCode : null,
       ourAmount,
     };
   });

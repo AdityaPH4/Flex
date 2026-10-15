@@ -1,8 +1,6 @@
 import { Router } from "express";
-import crypto from "crypto";
 import { z } from "zod";
 import { prisma } from "../db";
-import { env } from "../env";
 import { requireAuth, type AuthedRequest } from "../middleware/auth";
 import { getOrCreatePeriod } from "../lib/period";
 import { recordBenefitSpend, InsufficientBalanceError, WalletNotValidError, EmployeeInactiveError } from "../lib/spend";
@@ -137,7 +135,8 @@ const createTransactionSchema = z.object({
   cashAmount: z.number().nonnegative().multipleOf(0.01).max(MAX_SANE_AMOUNT).optional(),
   outletId: z.string().uuid().optional(),
   outletName: z.string().trim().min(1).max(120),
-  billNo: z.string().trim().max(120).optional(),
+  // Mandatory: the bill number is now what the cashier and the reconciliation go by.
+  billNo: z.string().trim().min(1).max(120),
   occurredAt: z.string().datetime().optional(),
   notes: z.string().max(280).optional(),
   idempotencyKey: z.string().min(8).max(128),
@@ -158,7 +157,7 @@ meRouter.post("/benefits/transactions", async (req: AuthedRequest, res) => {
       employeeId: req.auth!.employeeId,
       amount: body.amount,
       cashAmount: body.cashAmount,
-      billNo: body.billNo ?? null,
+      billNo: body.billNo,
       outletId: body.outletId ?? null,
       outletName: body.outletName ?? null,
       notes: body.notes ?? null,
@@ -196,91 +195,4 @@ meRouter.post("/benefits/transactions", async (req: AuthedRequest, res) => {
     }
     throw err;
   }
-});
-
-const reconciliationCodeSchema = z.object({
-  context: z.string().max(120).optional(),
-  transactionId: z.string().uuid().optional(),
-});
-
-function generateNumericCode(): string {
-  // 6 digits, human-readable - this gets read aloud and typed into Digitory
-  // by hand, so it needs to be short and unambiguous, not cryptographically
-  // opaque. It is NOT a secret and NOT a security boundary - see the
-  // ReconciliationCode model comment for why.
-  return crypto.randomInt(0, 1_000_000).toString().padStart(6, "0");
-}
-
-// Issues a short numeric code and stores it against the authenticated
-// employee for later reconciliation against Digitory's own records.
-//
-// This endpoint does NOT verify, consume, or authorize anything - it only
-// records "this code was generated for this employee at this time". Digitory
-// performs the actual payment once the cashier types the code in there; nothing
-// in this app calls Digitory and nothing in Digitory calls back here.
-meRouter.post("/benefits/reconciliation-code", async (req: AuthedRequest, res) => {
-  const parsed = reconciliationCodeSchema.safeParse(req.body ?? {});
-  if (!parsed.success) {
-    return res.status(400).json({ error: "invalid_body", details: parsed.error.flatten() });
-  }
-
-  const employee = await prisma.employee.findUniqueOrThrow({
-    where: { id: req.auth!.employeeId },
-  });
-
-  // If this code is for a specific self-recorded spend, confirm that spend
-  // actually belongs to the person asking - never let someone generate a
-  // code that looks linked to another employee's transaction.
-  let context = parsed.data.context;
-  if (parsed.data.transactionId) {
-    const txn = await prisma.benefitTransaction.findUnique({
-      where: { id: parsed.data.transactionId },
-    });
-    if (!txn || txn.employeeId !== employee.id) {
-      return res.status(404).json({ error: "transaction_not_found" });
-    }
-    context =
-      context ??
-      (txn.cashAmount
-        ? `${txn.outletName ?? "TOIT"} · ₹${Number(txn.amount)} + ₹${Number(txn.cashAmount)} cash`
-        : `${txn.outletName ?? "TOIT"} · ₹${Number(txn.amount)}`);
-  }
-
-  const expiresAt = new Date(Date.now() + env.reconciliationCodeTtlSeconds * 1000);
-
-  // Scoped to the calendar month, not globally - see the periodKey comment
-  // on the ReconciliationCode model. Digitory's ledger export (once it
-  // carries this code) only ever needs to disambiguate codes issued within
-  // the same month it's reconciling, so reuse across different months is
-  // fine and expected.
-  const now = new Date();
-  const periodKey = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`;
-
-  // Unique-constraint retry: astronomically unlikely with 1,000,000 possible
-  // codes per month, but cheap to guard against rather than assume away.
-  for (let attempt = 0; attempt < 5; attempt++) {
-    try {
-      const created = await prisma.reconciliationCode.create({
-        data: {
-          code: generateNumericCode(),
-          periodKey,
-          employeeId: employee.id,
-          employeeName: employee.name,
-          employeeCode: employee.employeeCode,
-          transactionId: parsed.data.transactionId,
-          context: context ?? "Benefit redemption",
-          expiresAt,
-        },
-      });
-      return res.status(201).json({
-        code: created.code,
-        expiresAt: created.expiresAt,
-        expiresInSeconds: env.reconciliationCodeTtlSeconds,
-      });
-    } catch (err: any) {
-      if (err?.code === "P2002") continue; // unique constraint hit - retry with a new code
-      throw err;
-    }
-  }
-  res.status(500).json({ error: "could_not_generate_code" });
 });

@@ -31,12 +31,6 @@ export interface Transaction {
   reconciliationCode: string | null;
 }
 
-export interface ReconciliationCodeResponse {
-  code: string;
-  expiresAt: string;
-  expiresInSeconds: number;
-}
-
 export class ApiError extends Error {
   constructor(public status: number, public code: string) {
     super(code);

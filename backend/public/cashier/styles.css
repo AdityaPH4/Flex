@@ -329,43 +329,37 @@ body.on-main { min-height: 0; overflow: hidden; }
   color: var(--gold-text);
 }
 
-.who { display: flex; flex-wrap: wrap; align-items: baseline; gap: 0 10px; min-width: 0; }
-.who strong {
-  font-size: clamp(15px, min(3vh, 2.4vw), 26px);
-  font-weight: 600;
-  line-height: 1.15;
-  overflow-wrap: anywhere;
-  display: -webkit-box;
-  -webkit-box-orient: vertical;
-  -webkit-line-clamp: 2;
-  overflow: hidden;
-}
-.who span { font-size: clamp(12px, min(2.3vh, 1.9vw), 19px); color: var(--text-2); font-weight: 500; white-space: nowrap; }
-.meta { color: var(--text-2); font-size: clamp(12px, min(2.2vh, 1.9vw), 17px); line-height: 1.3; overflow-wrap: anywhere; }
+/* "Bill 8812 · TOIT Indiranagar" - the bill number is what the cashier looks for. */
+.bill-line { display: flex; flex-wrap: wrap; align-items: baseline; gap: 0 10px; min-width: 0; }
+.bill-line strong { font-size: clamp(15px, min(3vh, 2.4vw), 26px); font-weight: 700; line-height: 1.15; }
+.bill-line span { font-size: clamp(12px, min(2.3vh, 1.9vw), 19px); color: var(--text-2); font-weight: 500; }
 
-.split { margin-top: 0; border-radius: 16px; background: var(--bg); padding: 4px; }
-.split-row {
+/* Everyone who paid part of this bill. */
+.payers { display: flex; flex-direction: column; gap: 2px; min-height: 0; margin-top: auto; }
+.payer {
   display: flex;
-  justify-content: space-between;
   align-items: baseline;
   gap: 8px;
-  padding: clamp(4px, 0.9vh, 9px) clamp(8px, 1.2vw, 14px);
-  font-size: clamp(12px, min(2.3vh, 1.9vw), 18px);
-  border-radius: 12px;
+  padding: clamp(2px, 0.5vh, 5px) 0;
+  font-size: clamp(12px, min(2.4vh, 1.9vw), 19px);
+  border-top: 1px solid var(--line);
 }
-.split-row strong { font-family: var(--display); font-size: clamp(14px, min(3vh, 2.3vw), 24px); }
-.split-row.cash { background: var(--gold); color: var(--text); font-weight: 600; }
+.payer-name { flex: 1; min-width: 0; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.payer-id { color: var(--text-2); font-weight: 500; white-space: nowrap; }
+.payer-amt { font-family: var(--display); font-weight: 700; white-space: nowrap; }
+.payer-cash { color: var(--gold-text); font-family: var(--body); font-weight: 600; font-size: 0.85em; }
+.payers-more { color: var(--text-2); font-size: clamp(11px, min(2.1vh, 1.7vw), 16px); padding-top: 2px; }
 
-.nocash {
-  margin-top: 0;
+.cashbar, .nocash {
   border-radius: 14px;
-  background: var(--sage-soft);
-  color: var(--sage-text);
   padding: clamp(6px, 1.2vh, 12px) 14px;
   font-weight: 600;
   font-size: clamp(12px, min(2.3vh, 1.9vw), 17px);
   line-height: 1.3;
 }
+.cashbar { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; background: var(--gold); color: var(--text); }
+.cashbar strong { font-family: var(--display); font-size: 1.25em; }
+.nocash { background: var(--sage-soft); color: var(--sage-text); }
 
 .foot {
   display: flex;
@@ -374,23 +368,7 @@ body.on-main { min-height: 0; overflow: hidden; }
   gap: 10px;
   margin-top: clamp(2px, 0.8vh, 8px);
 }
-.code-block { display: flex; align-items: baseline; gap: 8px; min-width: 0; }
-.code-label {
-  font-size: 11px;
-  font-weight: 700;
-  letter-spacing: 1px;
-  text-transform: uppercase;
-  color: var(--muted);
-}
-.code {
-  font-family: var(--display);
-  font-weight: 700;
-  font-size: clamp(22px, min(5vh, 3.6vw), 44px);
-  line-height: 1.05;
-  letter-spacing: 0.08em;
-  color: var(--text);
-  white-space: nowrap;
-}
+.foot-note { color: var(--text-2); font-weight: 500; font-size: clamp(12px, min(2.3vh, 1.9vw), 17px); }
 .alert .btn.primary {
   flex: none;
   font-size: clamp(14px, min(2.4vh, 2vw), 19px);
@@ -414,14 +392,13 @@ body.on-main { min-height: 0; overflow: hidden; }
     .badge { font-size: clamp(10px, min(4cqh, 3.4cqw), 13px); }
     .when { font-size: clamp(11px, min(4.2cqh, 3.4cqw), 15px); }
     .amount { font-size: clamp(20px, min(12.5cqh, 11.5cqw), 64px); }
-    .who strong { font-size: clamp(14px, min(5.8cqh, 5cqw), 26px); }
-    .who span { font-size: clamp(12px, min(4.6cqh, 4cqw), 19px); }
-    .meta { font-size: clamp(11px, min(4.5cqh, 3.8cqw), 17px); }
-    .split-row { padding: 1.3cqh 2.4cqw; font-size: clamp(11px, min(4.8cqh, 4cqw), 18px); }
-    .split-row strong { font-size: clamp(13px, min(6cqh, 5cqw), 24px); }
-    .nocash { padding: 2cqh 3cqw; font-size: clamp(11px, min(4.8cqh, 4cqw), 17px); }
+    .bill-line strong { font-size: clamp(14px, min(5.8cqh, 5cqw), 26px); }
+    .bill-line span { font-size: clamp(12px, min(4.6cqh, 4cqw), 19px); }
+    .payer { font-size: clamp(11px, min(4.6cqh, 3.8cqw), 18px); padding: 0.5cqh 0; }
+    .payers-more { font-size: clamp(11px, min(4cqh, 3.4cqw), 16px); }
+    .cashbar, .nocash { padding: 2cqh 3cqw; font-size: clamp(11px, min(4.6cqh, 3.8cqw), 17px); }
     .foot { margin-top: 0; }
-    .code { font-size: clamp(20px, min(10cqh, 9cqw), 46px); }
+    .foot-note { font-size: clamp(11px, min(4.4cqh, 3.6cqw), 17px); }
     .alert .btn.primary {
       font-size: clamp(13px, min(4.8cqh, 4cqw), 19px);
       min-height: clamp(34px, 13cqh, 54px);
@@ -429,15 +406,10 @@ body.on-main { min-height: 0; overflow: hidden; }
   }
 }
 
-/* No cash part: there is less to show, so show it bigger instead of leaving a gap. */
+/* Nobody paid cash: there is less to show, so show the total bigger. */
 @supports (height: 1cqh) {
   @media (min-width: 641px) {
-    .alert.no-split .amount { font-size: clamp(26px, min(16cqh, 14cqw), 80px); }
-    .alert.no-split .who strong { font-size: clamp(16px, min(6.2cqh, 5.4cqw), 30px); }
-    .alert.no-split .who span { font-size: clamp(13px, min(5cqh, 4.4cqw), 22px); }
-    .alert.no-split .meta { font-size: clamp(12px, min(5cqh, 4.2cqw), 20px); }
-    .alert.no-split .nocash { font-size: clamp(13px, min(6cqh, 4.6cqw), 24px); padding: 3cqh 3.5cqw; }
-    .alert.no-split .code { font-size: clamp(24px, min(12cqh, 10cqw), 56px); }
+    .alert.no-split .amount { font-size: clamp(26px, min(15cqh, 13cqw), 76px); }
   }
 }
 
@@ -463,7 +435,7 @@ body.on-main { min-height: 0; overflow: hidden; }
 
 .tx-row {
   display: grid;
-  grid-template-columns: 88px minmax(0, 2.2fr) minmax(0, 1fr) 112px 112px 100px 124px;
+  grid-template-columns: 88px minmax(0, 2.2fr) minmax(0, 1fr) 112px 112px 100px;
   align-items: center;
   gap: 12px;
   background: var(--surface);
@@ -497,8 +469,6 @@ body.on-main { min-height: 0; overflow: hidden; }
 .c-allow { color: var(--text-2); }
 .c-cash { color: var(--muted); }
 .c-cash.has-cash { color: var(--text); font-weight: 600; }
-.c-code { font-family: var(--display); font-weight: 700; font-size: 18px; letter-spacing: 0.08em; white-space: nowrap; }
-.c-code.none { font-family: var(--body); font-size: 13px; font-weight: 600; letter-spacing: 0; color: var(--warn); }
 
 .fine { color: var(--muted); font-size: 13px; margin-top: 12px; text-align: center; }
 
@@ -509,14 +479,13 @@ body.on-main { min-height: 0; overflow: hidden; }
     grid-template-columns: minmax(0, 1fr) auto;
     grid-template-areas:
       "who  total"
-      "time code"
-      "bill cash";
+      "bill cash"
+      "time time";
     gap: 4px 12px;
   }
   .c-who { grid-area: who; }
   .c-total { grid-area: total; }
   .c-time { grid-area: time; font-size: 14px; }
-  .c-code { grid-area: code; text-align: right; }
   .c-bill { grid-area: bill; font-size: 14px; }
   .c-cash { grid-area: cash; text-align: right; font-size: 14px; }
   .c-cash:not(.has-cash) { display: none; }
@@ -533,15 +502,12 @@ body.on-main { min-height: 0; overflow: hidden; }
   .alert-head { flex-wrap: wrap; gap: 2px 8px; }
   .when { margin-left: 0; font-size: 12px; white-space: normal; }
   .amount { font-size: clamp(20px, 6.2vw, 30px); }
-  .who strong { font-size: 15px; }
-  .who span, .meta { font-size: 12px; }
-  .split-row { font-size: 12px; padding: 5px 8px; }
-  .split-row strong { font-size: 14px; }
-  .nocash { font-size: 12px; padding: 7px 10px; }
-  .code { font-size: 24px; }
+  .bill-line strong { font-size: 15px; }
+  .bill-line span { font-size: 12px; }
+  .payer { font-size: 12px; }
+  .cashbar, .nocash { font-size: 12px; padding: 7px 10px; }
   .alert .btn.primary { font-size: 15px; min-height: 40px; }
   .foot { flex-direction: column; align-items: stretch; gap: 6px; }
-  .code-block { justify-content: center; }
   .alert .btn.primary { width: 100%; }
   .all-bar { padding: 10px 10px 4px; }
   .all-scroll { padding: 4px 10px 20px; }

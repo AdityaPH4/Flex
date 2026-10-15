@@ -471,12 +471,11 @@ function renderRosterChanges(data) {
 
 // ---------------- Reconcile ----------------
 //
-// The OTP column's real name isn't confirmed yet (Digitory's ledger export
-// doesn't carry it as of the last sample we have - see CLAUDE.md) - guessed
-// via candidates, same pattern this file used before the wallet-ledger
-// columns themselves were confirmed. Update this list if/when a real sample
-// with the actual column name shows up, rather than assuming it's fixed.
-const OTP_CANDIDATES = ["otp", "code", "reference_code", "reconciliation_code", "ref_code", "reference"];
+// Reconciliation is by bill number. The bill-number column's real name in
+// Digitory's ledger export isn't confirmed yet (the sample we have predates
+// this) - guessed via candidates. Update this list if/when a real sample with
+// the actual column name shows up, rather than assuming it's fixed.
+const BILL_CANDIDATES = ["bill no", "bill no.", "bill number", "bill_no", "billno", "bill #", "bill", "invoice no", "invoice number", "invoice"];
 
 function findColumn(headers, candidates) {
   const lower = headers.map((h) => h.toLowerCase().trim());
@@ -498,8 +497,8 @@ const reconcileError = document.getElementById("reconcile-error");
 
 // The wallet-ledger export's other columns are confirmed/fixed (see
 // data/Ledgers-7.csv): Wallet #, Event, Transaction Id, Payment Name,
-// Amount, Balance, Date Time, User, Status - only the OTP column's name is
-// guessed, since it doesn't exist in the sample we have yet.
+// Amount, Balance, Date Time, User, Status - only the bill-number column's
+// name is guessed, since it doesn't exist in the sample we have yet.
 fileInput.addEventListener("change", () => {
   const file = fileInput.files?.[0];
   reconcileError.classList.add("hidden");
@@ -514,17 +513,17 @@ fileInput.addEventListener("change", () => {
     skipEmptyLines: true,
     complete: (result) => {
       const headers = result.meta.fields ?? [];
-      const otpColumn = findColumn(headers, OTP_CANDIDATES);
-      if (!otpColumn) {
+      const billColumn = findColumn(headers, BILL_CANDIDATES);
+      if (!billColumn) {
         reconcileError.textContent =
-          `Couldn't find an OTP column. Found: ${headers.join(", ") || "(no headers)"}.`;
+          `Couldn't find a Bill No column. Found: ${headers.join(", ") || "(no headers)"}.`;
         reconcileError.classList.remove("hidden");
         return;
       }
 
       reconcileRows = result.data
         .map((row) => ({
-          otp: String(row[otpColumn] ?? "").trim(),
+          billNo: String(row[billColumn] ?? "").trim(),
           walletNo: row["Wallet #"] ? String(row["Wallet #"]) : undefined,
           event: row["Event"] ? String(row["Event"]) : undefined,
           transactionId: row["Transaction Id"] ? String(row["Transaction Id"]) : undefined,
@@ -545,10 +544,10 @@ fileInput.addEventListener("change", () => {
           user: row["User"] ? String(row["User"]) : undefined,
           status: row["Status"] ? String(row["Status"]) : undefined,
         }))
-        .filter((r) => r.otp.length > 0);
+        .filter((r) => r.billNo.length > 0);
 
       if (reconcileRows.length === 0) {
-        reconcileError.textContent = "No rows with an OTP value were found in this file.";
+        reconcileError.textContent = "No rows with a bill number were found in this file.";
         reconcileError.classList.remove("hidden");
         return;
       }
@@ -612,7 +611,7 @@ function renderReconcileResults() {
       ? `<span class="pill pill-success"><i class="ti ti-check"></i>Reconciled</span>`
       : `<span class="pill pill-warning"><i class="ti ti-alert-triangle"></i>Unreconciled</span>`;
     tr.innerHTML = `
-      <td>${escapeHtml(r.otp)}</td>
+      <td>${escapeHtml(r.billNo)}</td>
       <td>${escapeHtml(r.walletNo ?? "—")}</td>
       <td>${r.employeeName ? escapeHtml(r.employeeName) : "—"}</td>
       <td>${r.amount != null ? money(r.amount) : "—"}</td>
