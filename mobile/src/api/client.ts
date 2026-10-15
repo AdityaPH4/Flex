@@ -2,6 +2,7 @@ import {
   ApiError,
   type CurrentBalance,
   type EmployeeProfile,
+  type ReconciliationCodeResponse,
   type Transaction,
 } from "./types";
 
@@ -77,6 +78,11 @@ export const api = {
       { method: "POST", body: params }
     ),
 
+  createReconciliationCode: (params: { transactionId: string }) =>
+    request<ReconciliationCodeResponse>("/api/me/benefits/reconciliation-code", {
+      method: "POST",
+      body: params,
+    }),
 };
 
 export { ApiError };

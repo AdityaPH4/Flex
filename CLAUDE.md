@@ -19,8 +19,9 @@ and things to be careful not to break.
   at `/admin`
 - `backend/public/cashier/` — the till-side **cashier screen**, same approach
   (static page at `/cashier`, API in `backend/src/routes/cashier.ts`). It
-  shows each BILL as one card (every employee who paid part of that bill, the
-  bill total, any cash to collect) so the cashier can check the amounts. Two
+  shows each BILL as one card (every employee who paid part of that bill with
+  their OTP, the bill total, any cash to collect) so the cashier can check the
+  amounts and type the OTPs into Digitory. Two
   tabs: a 2x2 "Live payments" board that keeps each bill for 10 minutes, and
   "All Transactions" (today, IST day, searchable by name/employee code/bill
   no). Read-only: Digitory is still updated by hand. Shared `CASHIER_PASSWORD` login, like the admin dashboard. The outlet
@@ -29,24 +30,23 @@ and things to be careful not to break.
 
 ## Non-obvious decisions — don't relitigate these without asking the person first
 
-1. **Payments are keyed by BILL NUMBER; there is no reference code any more
-   (branch `bill-no-workflow`).** An explicit, later decision superseding the
-   earlier 6-digit-code flow: the employee enters outlet + amount + a
-   **mandatory bill number**, confirms, done - nothing is generated or read
-   aloud. Our backend never calls Digitory and Digitory never calls us;
-   Digitory processes the payment independently. Several employees can pay one
-   bill (each from their own allowance): the cashier screen shows ONE card per
-   (outlet, bill number) with the bill's total and every payer, and
+1. **Payments are keyed by BILL NUMBER, and each payment still gets an OTP
+   (branch `bill-no-workflow`).** The employee enters outlet + amount + a
+   **mandatory bill number**, confirms, and the app then generates and shows
+   the 6-digit OTP (the same `ReconciliationCode` flow as before); the cashier
+   types it into Digitory. Our backend never calls Digitory and Digitory never
+   calls us; nothing verifies the OTP in real time and Digitory processes the
+   payment independently. Several employees can pay one bill (each from their
+   own allowance, each with their own OTP): the cashier screen shows ONE card
+   per (outlet, bill number) with the bill's total and every payer + OTP, and
    `POST /admin/reconcile` (`backend/src/routes/admin.ts`) matches an uploaded
-   Digitory ledger against our payments by bill number within the month of
-   each ledger row's date - ledger rows for one bill + wallet are summed and
-   squared off against what that employee paid on that bill (allowance part
-   only); bill not found / wallet didn't pay it / amount mismatch / bill number
-   at two outlets are flagged with a specific reason. The ledger's bill-number
-   column name is guessed (`BILL_CANDIDATES` in `backend/public/admin/app.js`)
-   until Digitory's real export confirms it. The `ReconciliationCode` table,
-   its admin list endpoint and any old codes are left in place (history), but
-   nothing creates codes. Don't reintroduce the code flow without asking.
+   Digitory ledger against our payments by BILL NUMBER (not by OTP) within the
+   month of each ledger row's date - ledger rows for one bill + wallet are
+   summed and squared off against what that employee paid on that bill
+   (allowance part only); bill not found / wallet didn't pay it / amount
+   mismatch / bill number at two outlets are flagged with a specific reason.
+   The ledger's bill-number column name is guessed (`BILL_CANDIDATES` in
+   `backend/public/admin/app.js`) until Digitory's real export confirms it.
 
 2. **Login is Google Sign-In, not phone/OTP.** The original phone + SMS OTP
    login (`/auth/otp/*`) was replaced with Google Sign-In

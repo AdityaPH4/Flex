@@ -335,7 +335,7 @@ body.on-main { min-height: 0; overflow: hidden; }
 .bill-line span { font-size: clamp(12px, min(2.3vh, 1.9vw), 19px); color: var(--text-2); font-weight: 500; }
 
 /* Everyone who paid part of this bill. */
-.payers { display: flex; flex-direction: column; gap: 2px; min-height: 0; margin-top: auto; }
+.payers { display: flex; flex-direction: column; gap: 2px; min-height: 0; margin-top: auto; overflow-y: auto; overscroll-behavior: contain; }
 .payer {
   display: flex;
   align-items: baseline;
@@ -346,9 +346,9 @@ body.on-main { min-height: 0; overflow: hidden; }
 }
 .payer-name { flex: 1; min-width: 0; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .payer-id { color: var(--text-2); font-weight: 500; white-space: nowrap; }
+.payer-code { font-family: var(--display); font-weight: 700; letter-spacing: 0.08em; white-space: nowrap; background: var(--gold-soft); color: var(--gold-text); border-radius: 8px; padding: 0 0.5em; }
 .payer-amt { font-family: var(--display); font-weight: 700; white-space: nowrap; }
 .payer-cash { color: var(--gold-text); font-family: var(--body); font-weight: 600; font-size: 0.85em; }
-.payers-more { color: var(--text-2); font-size: clamp(11px, min(2.1vh, 1.7vw), 16px); padding-top: 2px; }
 
 .cashbar, .nocash {
   border-radius: 14px;
@@ -395,7 +395,6 @@ body.on-main { min-height: 0; overflow: hidden; }
     .bill-line strong { font-size: clamp(14px, min(5.8cqh, 5cqw), 26px); }
     .bill-line span { font-size: clamp(12px, min(4.6cqh, 4cqw), 19px); }
     .payer { font-size: clamp(11px, min(4.6cqh, 3.8cqw), 18px); padding: 0.5cqh 0; }
-    .payers-more { font-size: clamp(11px, min(4cqh, 3.4cqw), 16px); }
     .cashbar, .nocash { padding: 2cqh 3cqw; font-size: clamp(11px, min(4.6cqh, 3.8cqw), 17px); }
     .foot { margin-top: 0; }
     .foot-note { font-size: clamp(11px, min(4.4cqh, 3.6cqw), 17px); }
@@ -435,7 +434,7 @@ body.on-main { min-height: 0; overflow: hidden; }
 
 .tx-row {
   display: grid;
-  grid-template-columns: 88px minmax(0, 2.2fr) minmax(0, 1fr) 112px 112px 100px;
+  grid-template-columns: 88px minmax(0, 2.2fr) minmax(0, 1fr) 112px 112px 100px 124px;
   align-items: center;
   gap: 12px;
   background: var(--surface);
@@ -469,6 +468,8 @@ body.on-main { min-height: 0; overflow: hidden; }
 .c-allow { color: var(--text-2); }
 .c-cash { color: var(--muted); }
 .c-cash.has-cash { color: var(--text); font-weight: 600; }
+.c-code { font-family: var(--display); font-weight: 700; font-size: 18px; letter-spacing: 0.08em; white-space: nowrap; }
+.c-code.none { font-family: var(--body); font-size: 13px; font-weight: 600; letter-spacing: 0; color: var(--warn); }
 
 .fine { color: var(--muted); font-size: 13px; margin-top: 12px; text-align: center; }
 
@@ -479,14 +480,15 @@ body.on-main { min-height: 0; overflow: hidden; }
     grid-template-columns: minmax(0, 1fr) auto;
     grid-template-areas:
       "who  total"
-      "bill cash"
-      "time time";
+      "time code"
+      "bill cash";
     gap: 4px 12px;
   }
   .c-who { grid-area: who; }
   .c-total { grid-area: total; }
   .c-time { grid-area: time; font-size: 14px; }
   .c-bill { grid-area: bill; font-size: 14px; }
+  .c-code { grid-area: code; text-align: right; }
   .c-cash { grid-area: cash; text-align: right; font-size: 14px; }
   .c-cash:not(.has-cash) { display: none; }
   .c-cash.has-cash::before { content: "Cash "; font-weight: 500; color: var(--text-2); }

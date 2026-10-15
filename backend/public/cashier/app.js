@@ -2,11 +2,12 @@
  * Cashier screen. Meant to stay open on a tablet at the till.
  *
  * When an employee pays (part of) a bill from their phone, the payment is
- * recorded against the bill number they entered. This screen asks the backend
- * for bills about once a second and shows each bill as ONE card - when
- * several employees split one bill, they all appear on the same card with the
- * bill's total - so the cashier can check the amounts against the bill (and
- * collect any cash part).
+ * recorded against the bill number they entered and the app generates a
+ * 6-digit OTP for it. This screen asks the backend for bills about once a
+ * second and shows each bill as ONE card - when several employees split one
+ * bill, they all appear on the same card with the bill's total and each
+ * payer's OTP - so the cashier can check the amounts against the bill, collect
+ * any cash part and type the OTPs into Digitory.
  *
  * Two tabs:
  *   - Live payments: a 2x2 board of the bills paid in the last 10 minutes (the
@@ -14,7 +15,7 @@
  *     latest payer). Older ones drop off by themselves; "Got it" clears one
  *     early, and it comes back if someone else then pays the same bill.
  *   - All Transactions: every payment recorded today (the IST calendar day),
- *     one row per employee, searchable by name, employee code or bill number.
+ *     one row per employee payment with its OTP, searchable by name, employee code or bill number.
  *
  * Read-only: nothing here changes or verifies a payment. "Got it" only hides
  * a card on this device (remembered in localStorage).
@@ -116,6 +117,9 @@
     if (text != null) node.textContent = text;
     return node;
   }
+
+  const formatCode = (code) =>
+    typeof code === "string" && code.length === 6 ? code.slice(0, 3) + " " + code.slice(3) : code;
 
   const rupees = (n) =>
     "₹" + Number(n).toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
@@ -244,18 +248,20 @@
 
   // ---------- live payments ----------
 
+  // A bill's card is rebuilt when this changes: another payer, a new total, or an
+  // OTP arriving (it exists a moment after the payment itself).
+  const billSig = (b) => b.payments.length + "|" + b.totalAmount + "|" + b.payments.filter((p) => p.code).length;
   const isFresh = (b) => nowMs() - b.lastMs < FRESH_MS;
   // Cleared per head-count: if another person pays the same bill afterwards the
   // bill is a different "state" and comes back onto the board.
   const seenKey = (b) => b.id + "#" + b.payments.length;
   // On the board = a payer in the last window and not cleared with "Got it".
   const onBoard = (b) => !state.seen.has(seenKey(b)) && nowMs() - b.lastMs < state.windowMs;
-  const MAX_PAYER_ROWS = 3; // more people than this: the first ones, then "+N more"
 
   function buildAlert(b) {
     const card = el("article", "alert" + (isFresh(b) ? " fresh" : "") + (b.cashAmount > 0 ? "" : " no-split"));
     card.dataset.id = b.id;
-    card.dataset.sig = b.payments.length + "|" + b.totalAmount;
+    card.dataset.sig = billSig(b);
     // The card is a size container (see styles.css); the padded column inside
     // it holds the content so its text can be sized from the card's own box.
     const inner = el("div", "alert-in");
@@ -273,19 +279,18 @@
     billLine.append(el("strong", null, "Bill " + b.billNo), el("span", null, b.outlet || ""));
     inner.append(billLine);
 
+    // Everyone who paid is listed with their own OTP - the cashier needs each one
+    // for Digitory - so a long list scrolls inside the card rather than hiding names.
     const people = b.payments;
-    const shown = people.length > MAX_PAYER_ROWS ? people.slice(0, MAX_PAYER_ROWS - 1) : people;
     const payers = el("div", "payers");
-    for (const p of shown) {
+    for (const p of people) {
       const row = el("div", "payer");
       const amount = el("span", "payer-amt", rupees(p.allowanceAmount));
       if (p.cashAmount > 0) amount.append(el("span", "payer-cash", " + " + rupees(p.cashAmount) + " cash"));
-      row.append(el("span", "payer-name", p.employeeName), el("span", "payer-id", "ID " + p.employeeCode), amount);
+      row.append(el("span", "payer-name", p.employeeName), el("span", "payer-id", "ID " + p.employeeCode));
+      if (p.code) row.append(el("span", "payer-code", formatCode(p.code)));
+      row.append(amount);
       payers.append(row);
-    }
-    if (shown.length < people.length) {
-      const more = people.length - shown.length;
-      payers.append(el("div", "payers-more", "+ " + more + " more " + (more === 1 ? "person" : "people")));
     }
     inner.append(payers);
 
@@ -311,8 +316,7 @@
 
   function renderLive() {
     const board = [...state.payments.values()].filter(onBoard).sort((a, b) => b.lastMs - a.lastMs);
-    const sigOf = (b) => b.payments.length + "|" + b.totalAmount;
-    const current = new Map(board.map((b) => [b.id, sigOf(b)]));
+    const current = new Map(board.map((b) => [b.id, billSig(b)]));
 
     // Drop cards that left the board, and cards whose bill changed (another
     // person paid it): those are rebuilt below so the new payer shows up.
@@ -402,9 +406,11 @@
       // A bill comes back on every poll that covers one of its payments;
       // only a different set of payers is news.
       const prev = state.payments.get(b.id);
-      if (prev && prev.payments.length === b.payments.length && prev.totalAmount === b.totalAmount) continue;
+      if (prev && billSig(prev) === billSig(b)) continue;
       state.payments.set(b.id, b);
       changed = true;
+      // Only a new payer or total is news; an OTP arriving just fills in the card.
+      if (prev && prev.payments.length === b.payments.length && prev.totalAmount === b.totalAmount) continue;
 
       if (state.seen.has(seenKey(b))) continue; // cleared earlier, e.g. before a reload
       // A freshly opened screen shows what is still on the board but only
@@ -485,6 +491,7 @@
     row.append(el("div", "c-total num", rupees(t.totalAmount)));
     row.append(el("div", "c-allow num", rupees(t.allowanceAmount)));
     row.append(el("div", "c-cash num" + (t.cashAmount > 0 ? " has-cash" : ""), t.cashAmount > 0 ? rupees(t.cashAmount) : "—"));
+    row.append(el("div", "c-code" + (t.code ? "" : " none"), t.code ? formatCode(t.code) : "No code"));
     return row;
   }
 

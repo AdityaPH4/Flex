@@ -10,9 +10,9 @@ import { startOfDayIST } from "../lib/istDay";
 import { requireCashier } from "../middleware/cashierAuth";
 
 // The till-side screen (backend/public/cashier). It shows each bill the moment
-// an employee pays (part of) it from their phone, so the cashier can check the
-// amounts against the bill. Read-only: nothing here verifies, consumes or
-// changes a payment.
+// an employee pays (part of) it from their phone, with every payer's OTP, so the
+// cashier can check the amounts against the bill and type the codes into
+// Digitory. Read-only: nothing here verifies, consumes or changes a payment.
 export const cashierRouter = Router();
 
 // The live board only ever holds payments this young; anything older is still
@@ -146,7 +146,12 @@ cashierRouter.get("/payments", requireCashier, async (req, res) => {
           createdAt: { gt: new Date(serverTime.getTime() - BILL_LOOKBACK_MS) },
           OR: touched.map((b) => ({ outletName: b.outletName, billNo: b.billNo })),
         },
-        include: { employee: { select: { name: true, employeeCode: true } } },
+        include: {
+          employee: { select: { name: true, employeeCode: true } },
+          // The OTP the employee's app generated for this payment (the cashier
+          // types it into Digitory); null for the second or so before it exists.
+          reconciliationCodes: { orderBy: { createdAt: "desc" }, take: 1 },
+        },
         orderBy: { createdAt: "asc" },
       })
     : [];
@@ -166,6 +171,7 @@ cashierRouter.get("/payments", requireCashier, async (req, res) => {
           id: t.id,
           employeeName: t.employee.name,
           employeeCode: t.employee.employeeCode,
+          code: t.reconciliationCodes[0]?.code ?? null,
           allowanceAmount,
           cashAmount,
           totalAmount: roundMoney(allowanceAmount + cashAmount),
@@ -200,7 +206,8 @@ const transactionsQuerySchema = z.object({
 });
 
 // Every payment recorded since midnight IST, newest first, one row per
-// employee payment - what the "All Transactions" tab lists and searches.
+// employee payment - what the "All Transactions" tab lists and searches. A
+// payment whose app never got an OTP is still listed (`code` is null).
 // Voided payments are left out, same as the live feed.
 cashierRouter.get("/transactions", requireCashier, async (req, res) => {
   const parsed = transactionsQuerySchema.safeParse(req.query);
@@ -220,6 +227,7 @@ cashierRouter.get("/transactions", requireCashier, async (req, res) => {
     },
     include: {
       employee: { select: { name: true, employeeCode: true } },
+      reconciliationCodes: { orderBy: { createdAt: "desc" }, take: 1 },
     },
     orderBy: { createdAt: "desc" },
     take: MAX_TRANSACTIONS + 1,
@@ -231,6 +239,7 @@ cashierRouter.get("/transactions", requireCashier, async (req, res) => {
     const cashAmount = t.cashAmount != null ? Number(t.cashAmount) : 0;
     return {
       id: t.id,
+      code: t.reconciliationCodes[0]?.code ?? null,
       employeeName: t.employee.name,
       employeeCode: t.employee.employeeCode,
       outlet: t.outletName,

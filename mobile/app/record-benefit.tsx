@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from "react";
+import React, { useCallback, useEffect, useRef, useState } from "react";
 import {
   View,
   Text,
@@ -15,7 +15,8 @@ import {
 import { useRouter } from "expo-router";
 import { SafeAreaView } from "react-native-safe-area-context";
 import * as Crypto from "expo-crypto";
-import { X, ChevronDown, CircleCheck } from "lucide-react-native";
+import * as Clipboard from "expo-clipboard";
+import { X, ChevronDown, Copy, Check } from "lucide-react-native";
 import { api, ApiError } from "@/api/client";
 import { useAuth } from "@/auth/AuthContext";
 import { Card } from "@/components/Card";
@@ -30,6 +31,12 @@ interface Split {
 }
 
 const OUTLETS = ["TOIT Indiranagar", "TOIT Bagmane", "TOIT Pune"];
+
+function formatCode(code: string): string {
+  // "123456" -> "123 456" - easier to read aloud and easier for the cashier
+  // to hold in their head while typing it into Digitory.
+  return `${code.slice(0, 3)} ${code.slice(3)}`;
+}
 
 // Strips everything but digits and a single decimal point, capped at 2
 // decimal places - robust against a stray second "." (easy to fat-finger on
@@ -101,14 +108,38 @@ export default function RecordBenefitScreen() {
     };
   }, []);
 
-  // Once the payment is recorded, this screen switches from the form to a
-  // "done" confirmation. There is no code to hand over any more: the cashier
-  // and the later reconciliation both go by the bill number.
+  // Once the payment is recorded, we switch this screen from the form into
+  // showing the code generated for that specific transaction.
   const [transactionId, setTransactionId] = useState<string | null>(null);
+  const [code, setCode] = useState<string | null>(null);
+  const [codeLoading, setCodeLoading] = useState(false);
+  const [codeError, setCodeError] = useState<string | null>(null);
+  const [codeCopied, setCodeCopied] = useState(false);
+
+  const onCopyCode = async () => {
+    if (!code) return;
+    await Clipboard.setStringAsync(code);
+    setCodeCopied(true);
+    setTimeout(() => setCodeCopied(false), 1500);
+  };
+
   const total = parseFloat(amount) || 0;
 
-  const canSubmit = total > 0 && billNo.trim().length > 0;
+  const canSubmit = total > 0 && billNo.trim().length > 0; // the bill number is mandatory
   const [outletError, setOutletError] = useState(false);
+
+  const fetchCode = useCallback(async (forTransactionId: string) => {
+    setCodeLoading(true);
+    setCodeError(null);
+    try {
+      const res = await api.createReconciliationCode({ transactionId: forTransactionId });
+      setCode(res.code);
+    } catch {
+      setCodeError("Payment recorded, but couldn't generate a code. Please contact support.");
+    } finally {
+      setCodeLoading(false);
+    }
+  }, []);
 
   // Tapping "Confirm Payment" needs to know up front whether this amount is
   // over the remaining balance, so the *first* popup shown is the right
@@ -154,6 +185,7 @@ export default function RecordBenefitScreen() {
       idempotencyKey: idempotencyKeyRef.current,
     });
     setTransactionId(result.transaction.id);
+    await fetchCode(result.transaction.id);
   };
 
   const onConfirm = async () => {
@@ -224,18 +256,32 @@ export default function RecordBenefitScreen() {
           </View>
         ) : transactionId ? (
           <ScrollView style={styles.flex} contentContainerStyle={styles.content}>
-            <Card tone="gold" style={styles.doneCard}>
-              <CircleCheck size={44} color={colors.goldText} />
-              <Text style={styles.doneTitle}>Payment recorded</Text>
-              <Text style={styles.doneSummary}>
-                {split
-                  ? `${formatMoney(split.allowance)} allowance + ${formatMoney(split.cash)} cash`
-                  : formatMoney(total)}
-              </Text>
-              <Text style={styles.doneMeta}>
-                Bill {billNo.trim()}
-                {outletName.trim() ? ` · ${outletName.trim()}` : ""}
-              </Text>
+            <Card tone="gold" style={styles.codeCard}>
+              {codeLoading && !code ? (
+                <ActivityIndicator color={colors.goldText} />
+              ) : code ? (
+                <>
+                  <Text style={styles.codeLabel}>GIVE THIS CODE TO THE CASHIER</Text>
+                  <View style={styles.codeRow}>
+                    <Text style={styles.codeValue}>{formatCode(code)}</Text>
+                    <Pressable onPress={onCopyCode} hitSlop={10} style={styles.copyButton}>
+                      {codeCopied ? (
+                        <Check size={18} color={colors.goldText} />
+                      ) : (
+                        <Copy size={18} color={colors.goldText} />
+                      )}
+                    </Pressable>
+                  </View>
+                  <Text style={styles.codeSummary}>
+                    {split
+                      ? `${formatMoney(split.allowance)} allowance + ${formatMoney(split.cash)} cash`
+                      : formatMoney(total)}
+                    {outletName.trim() ? ` · ${outletName.trim()}` : ""}
+                  </Text>
+                </>
+              ) : (
+                <Text style={styles.codeError}>{codeError}</Text>
+              )}
             </Card>
           </ScrollView>
         ) : (
@@ -285,7 +331,7 @@ export default function RecordBenefitScreen() {
             </View>
 
             <View>
-              <Text style={styles.fieldLabel}>Bill No.</Text>
+              <Text style={styles.fieldLabel}>Bill No. (required)</Text>
               <TextInput
                 value={billNo}
                 onChangeText={(v) => {
@@ -489,8 +535,18 @@ const styles = StyleSheet.create({
   totalValue: { ...t.h1, color: colors.goldText },
   error: { ...t.caption, color: colors.danger, textAlign: "center" },
   footer: { padding: spacing.lg },
-  doneCard: { alignItems: "center", paddingVertical: spacing.xxl, gap: spacing.sm },
-  doneTitle: { ...t.h2, color: colors.textPrimary },
-  doneSummary: { ...t.heroNumber, color: colors.goldText, textAlign: "center" },
-  doneMeta: { ...t.bodyMedium, color: colors.textSecondary, textAlign: "center" },
+  codeCard: { alignItems: "center", paddingVertical: spacing.xxl, gap: spacing.sm },
+  codeLabel: { ...t.label, color: colors.textSecondary, textTransform: "uppercase" },
+  codeValue: { ...t.heroNumber, color: colors.goldText, letterSpacing: 4 },
+  codeRow: { flexDirection: "row", alignItems: "center", gap: spacing.sm },
+  copyButton: {
+    width: 32,
+    height: 32,
+    borderRadius: radii.pill,
+    backgroundColor: colors.goldSoft,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  codeSummary: { ...t.bodyMedium, color: colors.textPrimary, textAlign: "center", marginTop: spacing.xs },
+  codeError: { ...t.body, color: colors.danger, textAlign: "center" },
 });
