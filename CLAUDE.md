@@ -22,7 +22,7 @@ and things to be careful not to break.
   shows each BILL as one card (every employee who paid part of that bill with
   their OTP, the bill total, any cash to collect) so the cashier can check the
   amounts and type the OTPs into Digitory. Two
-  tabs: a 2x2 "Live payments" board that keeps each bill for 10 minutes, and
+  tabs: a "Live payments" board (2x2, growing to 3x2/3x3/4x3 as bills arrive so nothing scrolls up to 12) that keeps each bill for 10 minutes, and
   "All Transactions" (today, IST day, searchable by name/employee code/bill
   no). Read-only: Digitory is still updated by hand. Shared `CASHIER_PASSWORD` login, like the admin dashboard. The outlet
   list it offers (`backend/src/lib/outlets.ts`) must stay in sync with

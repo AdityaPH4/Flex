@@ -10,7 +10,8 @@
  * any cash part and type the OTPs into Digitory.
  *
  * Two tabs:
- *   - Live payments: a 2x2 board of the bills paid in the last 10 minutes (the
+ *   - Live payments: a board of the bills paid in the last 10 minutes, 2x2 and
+ *     growing to 3x2, 3x3, 4x3 as more arrive so everything stays in view (the
  *     server sends the exact length as windowSeconds; it runs from a bill's
  *     latest payer). Older ones drop off by themselves; "Got it" clears one
  *     early, and it comes back if someone else then pays the same bill.
@@ -342,6 +343,11 @@
     }
 
     const count = board.length;
+    // Grow the grid with the number of bills so they all stay in view: 2x2 for
+    // up to 4, 3x2 up to 6, 3x3 up to 9, 4x3 up to 12; beyond that it scrolls.
+    const [cols, rows] = count <= 4 ? [2, 2] : count <= 6 ? [3, 2] : count <= 9 ? [3, 3] : [4, 3];
+    container.style.setProperty("--cols", String(cols));
+    container.style.setProperty("--rows", String(rows));
     container.classList.toggle("hidden", count === 0);
     const empty = $("empty");
     empty.classList.toggle("hidden", count > 0);

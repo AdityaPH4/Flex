@@ -323,8 +323,9 @@ that outlet appear, on both tabs below.
 
 **Two tabs** (the control sits just before "Sign out"):
 
-- **Live payments** - a 2x2 board of **bills**: four cards fill the screen, a
-  fifth and beyond scroll in. One bill number at one outlet is one card, however
+- **Live payments** - a board of **bills** that always fills the screen: 2x2
+  for up to 4 bills, then 3x2 (5-6), 3x3 (7-9) and 4x3 (10-12), so nothing
+  scrolls until there are more than 12. One bill number at one outlet is one card, however
   many employees paid it, each payer listed with their own OTP (a long list
   scrolls inside the card). A bill stays for **10 minutes** from its latest
   payment and then drops off by itself; "Got it" clears a card sooner (and it
