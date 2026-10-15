@@ -1,0 +1,98 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<meta name="theme-color" content="#F7F4EF" />
+<meta name="robots" content="noindex, nofollow" />
+<title>TREAT — Cashier</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='16' fill='%23D4A24C'/%3E%3Ctext x='32' y='44' font-family='Arial,sans-serif' font-size='38' font-weight='700' text-anchor='middle' fill='%23241F1A'%3ET%3C/text%3E%3C/svg%3E" />
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=Space+Grotesk:wght@500;700&display=swap" rel="stylesheet" />
+<link rel="stylesheet" href="/cashier/styles.css" />
+</head>
+<body>
+
+  <!-- ================= LOGIN ================= -->
+  <main id="login-screen" class="center-screen">
+    <div class="card narrow">
+      <p class="eyebrow">TREAT</p>
+      <h1>Cashier</h1>
+      <p class="subtitle">Enter the cashier password to see payments as they come in.</p>
+      <form id="login-form">
+        <input type="password" id="login-password" placeholder="Password" autocomplete="current-password" autofocus />
+        <button type="submit" id="login-button" class="btn primary">Sign in</button>
+        <p id="login-error" class="error hidden" role="alert"></p>
+      </form>
+    </div>
+  </main>
+
+  <!-- ================= OUTLET PICKER ================= -->
+  <main id="outlet-screen" class="center-screen hidden">
+    <div class="card narrow">
+      <p class="eyebrow">TREAT</p>
+      <h1>Which till is this?</h1>
+      <p class="subtitle">This screen will only show payments for the outlet you pick. You can change it later.</p>
+      <div id="outlet-list" class="outlet-list"></div>
+      <p id="outlet-error" class="error hidden" role="alert"></p>
+      <button id="outlet-back" type="button" class="btn ghost hidden">Back</button>
+    </div>
+  </main>
+
+  <!-- ================= MAIN: LIVE PAYMENTS + ALL TRANSACTIONS ================= -->
+  <div id="main-screen" class="shell hidden">
+    <header class="topbar">
+      <div class="brand">TREAT <span class="pill">Cashier</span></div>
+      <div class="topbar-right">
+        <span id="status" class="status" data-state="live" role="status">
+          <span class="dot"></span><span id="status-text">Live</span>
+        </span>
+        <button id="sound-button" type="button" class="btn ghost small">Sound on</button>
+        <button id="outlet-button" type="button" class="btn ghost small"></button>
+        <div class="tabs" role="tablist" aria-label="Cashier views">
+          <button id="tab-live" type="button" class="tab active" role="tab" aria-selected="true" aria-controls="view-live">
+            Live payments<span id="live-count" class="count hidden">0</span>
+          </button>
+          <button id="tab-all" type="button" class="tab" role="tab" aria-selected="false" aria-controls="view-all">All Transactions</button>
+        </div>
+        <button id="logout-button" type="button" class="btn ghost small">Sign out</button>
+      </div>
+    </header>
+
+    <div id="sound-banner" class="banner hidden">Tap the screen once to turn on the alert sound.</div>
+
+    <!-- Live payments: a 2x2 board of the last 10 minutes -->
+    <section id="view-live" class="view" role="tabpanel" aria-labelledby="tab-live">
+      <section id="alerts" class="alerts" aria-live="assertive"></section>
+      <p id="empty" class="empty"></p>
+    </section>
+
+    <!-- All Transactions: everything recorded today, searchable -->
+    <section id="view-all" class="view hidden" role="tabpanel" aria-labelledby="tab-all">
+      <div class="all-bar">
+        <div class="all-title">
+          <h2 id="all-title">Today</h2>
+          <span id="all-sub" class="all-sub"></span>
+        </div>
+        <div class="all-tools">
+          <input id="search" type="search" placeholder="Search by name or employee code" autocomplete="off" autocapitalize="off" spellcheck="false" aria-label="Search today's transactions by employee name or employee code" />
+          <button id="all-refresh" type="button" class="btn ghost small">Refresh</button>
+        </div>
+      </div>
+      <div id="all-banner" class="banner hidden"></div>
+      <div class="all-scroll">
+        <div id="tx-head" class="tx-row tx-head hidden" aria-hidden="true">
+          <span>Time</span><span>Employee</span><span>Bill</span>
+          <span class="num">Total</span><span class="num">Allowance</span><span class="num">Cash</span><span>Code</span>
+        </div>
+        <div id="tx-list" class="tx-list"></div>
+        <p id="all-empty" class="empty inline hidden"></p>
+        <p id="all-note" class="fine"></p>
+      </div>
+    </section>
+  </div>
+
+  <script src="/cashier/app.js"></script>
+</body>
+</html>

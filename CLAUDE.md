@@ -17,6 +17,17 @@ and things to be careful not to break.
 - `backend/public/admin/` — a small static HTML/CSS/JS admin dashboard
   (no build step, no framework) served directly by the same Express server
   at `/admin`
+- `backend/public/cashier/` — the till-side **cashier screen**, same approach
+  (static page at `/cashier`, API in `backend/src/routes/cashier.ts`). It
+  shows each payment the moment its Digitory reference code is generated, so
+  the cashier can check the amount (and collect any cash part) before typing
+  the code into Digitory. Two tabs: a 2x2 "Live payments" board that keeps each
+  payment for 10 minutes, and "All Transactions" (today, IST day, searchable by
+  name/employee code). Read-only: it doesn't change decision 1 below - the
+  code is still just a reconciliation key and Digitory is still updated by
+  hand. Shared `CASHIER_PASSWORD` login, like the admin dashboard. The outlet
+  list it offers (`backend/src/lib/outlets.ts`) must stay in sync with
+  `OUTLETS` in `mobile/app/record-benefit.tsx`.
 
 ## Non-obvious decisions — don't relitigate these without asking the person first
 
@@ -65,7 +76,18 @@ and things to be careful not to break.
 3. **Balance enforcement is a single atomic SQL UPDATE**, not
    read-then-write. See `backend/src/lib/spend.ts`. This is intentional and
    handles concurrent requests correctly - don't refactor it into separate
-   check/update steps.
+   check/update steps. (It now reads `used + amount <= LEAST(allowance, cap)`:
+   `cap` is the prorated allowance of an employee with a last working day,
+   see `backend/src/lib/lastDay.ts` - still one statement.)
+
+   **Last working day** (`Employee.lastWorkingDay`, nullable) comes in through
+   the roster import's optional `LWD` column (empty = not leaving; column
+   absent from a file = stored values left alone; present = the file wins,
+   an empty cell clears it). The Employees table only displays it: in the month of that date only
+   `day/30` of the allowance is usable (flat 30, capped at 100%), spending
+   works through the end of that day (IST) and is refused after it. "Revoke
+   balance" (admin, only for someone with a last working day set) lowers the
+   month's allowance to what was used.
 
 4. **The admin dashboard uses one shared password**, not per-admin accounts
    (`ADMIN_PASSWORD` env var). Known, accepted MVP tradeoff for a 1-2-admin

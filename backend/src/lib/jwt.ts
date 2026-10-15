@@ -1,3 +1,4 @@
+import crypto from "crypto";
 import jwt from "jsonwebtoken";
 import { env } from "../env";
 
@@ -40,5 +41,43 @@ export function signAdminToken(): string {
 export function verifyAdminToken(token: string): AdminTokenPayload {
   const payload = jwt.verify(token, env.jwtSecret) as AdminTokenPayload;
   if (payload.isAdmin !== true) throw new Error("not an admin token");
+  return payload;
+}
+
+// --- cashier screen tokens ---------------------------------------------
+//
+// Its own token shape again, so neither an employee session nor an admin
+// token can be used on the cashier feed (and a cashier token has no
+// sessionId / isAdmin, so it can't be replayed anywhere else either). The
+// token also carries a short fingerprint of the cashier password: change
+// CASHIER_PASSWORD and every token issued under the old one stops working,
+// which is the only way to sign out a lost till tablet.
+
+export interface CashierTokenPayload {
+  role: "cashier";
+  pwv: string;
+}
+
+function cashierPasswordVersion(): string {
+  return crypto
+    .createHash("sha256")
+    .update(`cashier:${env.cashierPassword}`)
+    .digest("hex")
+    .slice(0, 16);
+}
+
+export function signCashierToken(): string {
+  return jwt.sign(
+    { role: "cashier", pwv: cashierPasswordVersion() } satisfies CashierTokenPayload,
+    env.jwtSecret,
+    { expiresIn: `${env.cashierSessionTtlDays}d` }
+  );
+}
+
+export function verifyCashierToken(token: string): CashierTokenPayload {
+  const payload = jwt.verify(token, env.jwtSecret) as CashierTokenPayload;
+  if (!env.cashierPassword || payload.role !== "cashier" || payload.pwv !== cashierPasswordVersion()) {
+    throw new Error("not a valid cashier token");
+  }
   return payload;
 }

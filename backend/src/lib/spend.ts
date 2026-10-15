@@ -1,5 +1,6 @@
 import { prisma } from "../db";
 import { getOrCreatePeriod } from "./period";
+import { effectiveAllowance, lastDayEnds } from "./lastDay";
 import type { Prisma, PrismaClient } from "@prisma/client";
 
 type Db = PrismaClient | Prisma.TransactionClient;
@@ -18,10 +19,17 @@ export class WalletNotValidError extends Error {
   }
 }
 
+export class EmployeeInactiveError extends Error {
+  constructor() {
+    super("This employee is no longer active.");
+    this.name = "EmployeeInactiveError";
+  }
+}
+
 export interface RecordSpendInput {
   employeeId: string;
-  amount: number; // whole rupees, > 0 - the portion deducted from the allowance
-  cashAmount?: number; // whole rupees - paid outside the benefit system, never checked/enforced
+  amount: number; // rupees, up to 2 decimal places, > 0 - the portion deducted from the allowance
+  cashAmount?: number; // rupees, up to 2 decimal places - paid outside the benefit system, never checked/enforced
   billNo?: string | null; // the outlet's own bill/receipt number, entered by the employee
   outletId?: string | null;
   outletName?: string | null;
@@ -48,8 +56,8 @@ export interface RecordSpendInput {
  * connection) safe to resend verbatim.
  */
 export async function recordBenefitSpend(input: RecordSpendInput, existingTx?: Db) {
-  if (!Number.isInteger(input.amount) || input.amount <= 0) {
-    throw new Error("amount must be a positive integer");
+  if (!(input.amount > 0)) {
+    throw new Error("amount must be a positive number");
   }
 
   const lookupDb = existingTx ?? prisma;
@@ -63,20 +71,31 @@ export async function recordBenefitSpend(input: RecordSpendInput, existingTx?: D
     // The validity window doesn't shift under concurrent requests the way a
     // numeric balance does, so it doesn't need that same atomicity treatment.
     const employee = await tx.employee.findUniqueOrThrow({ where: { id: input.employeeId } });
+    // requireAuth only checks this once, at the very start of the request -
+    // re-check here too, since a roster reimport's leaver pass can deactivate
+    // this employee while this exact request is still in flight (between
+    // auth and this write), with no other mechanism cutting the request off.
+    if (!employee.active) {
+      throw new EmployeeInactiveError();
+    }
     const spendAt = input.occurredAt ?? new Date();
     if (
       (employee.walletValidFrom && spendAt < employee.walletValidFrom) ||
-      (employee.walletValidTo && spendAt > employee.walletValidTo)
+      (employee.walletValidTo && spendAt > employee.walletValidTo) ||
+      (employee.lastWorkingDay && spendAt >= lastDayEnds(employee.lastWorkingDay))
     ) {
       throw new WalletNotValidError();
     }
 
     const period = await getOrCreatePeriod(tx, input.employeeId, input.occurredAt);
 
+    // Still one atomic statement: the leaving-employee proration only tightens
+    // the ceiling (LEAST), it never needs a separate read-then-write.
+    const cap = effectiveAllowance(Number(period.allowance), employee.lastWorkingDay, period.year, period.month);
     const updated = await tx.$queryRaw<{ id: string }[]>`
       UPDATE "BenefitPeriod"
       SET used = used + ${input.amount}, "updatedAt" = now()
-      WHERE id = ${period.id} AND used + ${input.amount} <= allowance
+      WHERE id = ${period.id} AND used + ${input.amount} <= LEAST(allowance, ${cap})
       RETURNING id
     `;
 

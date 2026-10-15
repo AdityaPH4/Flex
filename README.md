@@ -197,6 +197,14 @@ needing EAS at all.
   **Digitory processes the actual payment from there** - our backend never
   calls Digitory and Digitory never calls us, and nothing verifies or
   consumes the code in real time at the point of sale.
+- **The cashier screen shows each payment the moment its code is generated.**
+  The cashier doesn't have to catch the code by ear: a screen at the till
+  (`/cashier`, see "Cashier screen" below) pops up the amount, the employee
+  and any cash to collect as soon as the code exists, so the cashier can
+  check the amount against the bill and then type the code into Digitory. It
+  keeps each payment on its live board for 10 minutes and has an "All
+  Transactions" tab for the rest of the day. It is read-only - it changes
+  nothing and verifies nothing; Digitory is still updated by hand.
 - **Reconciling later IS automated, once Digitory's ledger carries this
   code.** `POST /api/admin/reconcile` matches an admin-uploaded Digitory
   ledger export against the `ReconciliationCode` table by code (scoped to
@@ -285,6 +293,61 @@ last `ADMIN_SESSION_TTL_HOURS` (default 12) before needing to sign in again.
 Source: `backend/src/routes/admin.ts` (API) and `backend/public/admin/`
 (the actual page - plain HTML/CSS/JS, no build step, no framework).
 
+## Cashier screen
+
+A screen meant to stay open on a tablet at the till. Every time an employee
+records a payment, the app generates the 6-digit code (the "OTP") against it;
+the moment that code exists, this screen pops up a card with the **total
+amount**, the employee's **name and ID**, the **outlet and bill number**, how
+much came **from the allowance** and how much **cash to collect** (if the bill
+was split), and the **code** to type into Digitory. The cashier checks the
+amount against the bill and types the code into Digitory.
+
+**URL:** `https://<server>/cashier/` (served by the backend, same as `/admin`).
+
+**Login:** the shared password in `CASHIER_PASSWORD` (`backend/.env`). Leaving
+it unset keeps the screen locked (login answers 503). Changing it signs every
+till out - the token carries a fingerprint of the password. Sessions last
+`CASHIER_SESSION_TTL_DAYS` (default 14). Ten wrong passwords from one address
+lock that address out for five minutes.
+
+**Which payments it shows:** after logging in the cashier picks the outlet
+(the list lives in `backend/src/lib/outlets.ts` and must match `OUTLETS` in
+`mobile/app/record-benefit.tsx`) or "All outlets"; only payments recorded for
+that outlet appear, on both tabs below.
+
+**Two tabs** (the control sits just before "Sign out"):
+
+- **Live payments** - a 2x2 board: four cards fill the screen, a fifth and
+  beyond scroll in. A payment stays for **10 minutes** from the moment its code
+  was generated and then drops off by itself; "Got it" clears a card sooner.
+  The length is `LIVE_WINDOW_MS` in `backend/src/routes/cashier.ts` (the screen
+  reads it from the `windowSeconds` field of the feed). The screen asks
+  `GET /api/cashier/payments` once a second (each poll covers the last minute
+  and de-duplicates, so a late-committing row isn't missed). A payment that has
+  no code yet doesn't appear - the card is triggered by the code being
+  generated. The tab shows a count of what is on the board.
+- **All Transactions** - every payment recorded today, newest first
+  (`GET /api/cashier/transactions`). "Today" is the **IST calendar day**
+  (midnight to midnight India time - the server runs on UTC, see
+  `backend/src/lib/istDay.ts`). A search box filters by employee **name or
+  employee code**; several words must all match (`rahul 9001`). Unlike the live
+  board it also lists a payment that never got a code (shown as "No code");
+  voided payments are left out. It refreshes by itself every 15 seconds and as
+  soon as a new payment arrives, and a banner says so if payments are waiting
+  on the live board while the cashier browses.
+
+**On the device:** it beeps on a new payment (browsers only allow sound after
+a tap - a banner says so after a reload), keeps the screen awake, shows
+"Reconnecting..." and recovers by itself if the connection drops, and
+remembers which cards were cleared ("Got it" is stored on that device only,
+not on the server). After a reload the board still shows everything from the
+last 10 minutes that wasn't cleared; it just doesn't beep again for payments
+older than two minutes.
+
+Source: `backend/src/routes/cashier.ts` (API) and `backend/public/cashier/`
+(plain HTML/CSS/JS, no build step).
+
 ## API reference
 
 | Method | Path | Auth | Purpose |
@@ -298,15 +361,22 @@ Source: `backend/src/routes/admin.ts` (API) and `backend/public/admin/`
 | POST | `/api/me/benefits/reconciliation-code` | employee | Generate a numeric reference code for Digitory |
 | POST | `/api/admin/login` | - | Admin login (shared password) |
 | GET | `/api/admin/overview` | admin | Aggregate stats across all employees |
-| GET | `/api/admin/employees` | admin | Every active employee's current balance |
+| GET | `/api/admin/employees` | admin | Every active employee's current balance (allowance already prorated for someone leaving this month) |
+| POST | `/api/admin/employees/:employeeCode/revoke-balance` | admin | Take back this month's remaining balance of an employee who has an LWD (last working day) from the roster upload |
 | GET | `/api/admin/transactions` | admin | Every benefit transaction, paginated |
 | GET | `/api/admin/reconciliation-codes` | admin | Every Digitory reference code, paginated |
 | POST | `/api/admin/reconcile` | admin | Upload a Digitory ledger export, match by code, square off amounts |
+| POST | `/api/cashier/login` | - | Cashier screen login (shared password) |
+| GET | `/api/cashier/outlets` | cashier | The outlets a till can be set to |
+| GET | `/api/cashier/payments` | cashier | Payments whose code was generated in the last 10 minutes - the live board (`outlet`, `since`, `limit`) |
+| GET | `/api/cashier/transactions` | cashier | Every confirmed payment since midnight IST, newest first, with its code if it has one (`outlet`) |
 
 "employee" auth = `Authorization: Bearer <employee session token>`.
 "admin" auth = `Authorization: Bearer <admin token>` (from `/api/admin/login`) -
 a completely separate token type; an employee's session token is never
-accepted on admin routes and vice versa.
+accepted on admin routes and vice versa. "cashier" auth is a third, separate
+token type (from `/api/cashier/login`): it works only on `/api/cashier/*`, and
+neither an employee nor an admin token is accepted there.
 
 Note: Digitory calls its own reconciliation field "OTP" too, but
 `/api/me/benefits/reconciliation-code` is unrelated to login - it's only a

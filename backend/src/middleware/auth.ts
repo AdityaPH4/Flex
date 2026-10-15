@@ -35,6 +35,16 @@ export async function requireAuth(
     return res.status(401).json({ error: "invalid_or_expired_token" });
   }
 
+  // Admin tokens (signAdminToken) are signed with this same JWT_SECRET but
+  // carry a different, sessionId-less payload shape - verifySessionToken's
+  // signature check alone can't tell them apart (both verify fine). Without
+  // this, an admin token sent here would pass verification and then crash
+  // the lookup below (Prisma rejects an `id: undefined` filter outright)
+  // instead of cleanly being rejected as the wrong kind of token.
+  if (typeof payload.sessionId !== "string") {
+    return res.status(401).json({ error: "invalid_or_expired_token" });
+  }
+
   const session = await prisma.session.findUnique({
     where: { id: payload.sessionId },
   });

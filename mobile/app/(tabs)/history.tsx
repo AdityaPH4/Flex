@@ -5,7 +5,7 @@ import { SafeAreaView } from "react-native-safe-area-context";
 import { LogOut } from "lucide-react-native";
 import { useAuth } from "@/auth/AuthContext";
 import { useIsOnline } from "@/api/useIsOnline";
-import { api } from "@/api/client";
+import { api, ApiError } from "@/api/client";
 import type { Transaction } from "@/api/types";
 import { TransactionRow } from "@/components/TransactionRow";
 import { OfflineBanner } from "@/components/OfflineBanner";
@@ -60,12 +60,18 @@ export default function HistoryScreen() {
       setTransactions(res.transactions);
       setCursor(res.nextCursor);
       setError(false);
-    } catch {
+    } catch (err) {
+      // See home.tsx's identical guard - a 401 means the session is dead
+      // (expired/revoked/employee deactivated), not a network blip.
+      if (err instanceof ApiError && err.status === 401) {
+        await logout();
+        return;
+      }
       setError(true);
     } finally {
       setLoadingInitial(false);
     }
-  }, []);
+  }, [logout]);
 
   useFocusEffect(
     useCallback(() => {

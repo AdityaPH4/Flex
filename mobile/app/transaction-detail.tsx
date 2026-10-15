@@ -5,6 +5,7 @@ import { SafeAreaView } from "react-native-safe-area-context";
 import { X } from "lucide-react-native";
 import { Card } from "@/components/Card";
 import { colors, radii, spacing, shadows, type as t } from "@/theme/tokens";
+import { formatMoney } from "@/utils/money";
 import type { Transaction } from "@/api/types";
 
 function formatDateTime(iso: string): string {
@@ -53,12 +54,29 @@ export default function TransactionDetailScreen() {
             </View>
           </View>
 
-          <View>
-            <Text style={styles.fieldLabel}>Final Amount</Text>
-            <View style={styles.readOnlyInput}>
-              <Text style={styles.readOnlyValue}>₹{transaction.amount.toLocaleString("en-IN")}</Text>
+          {transaction.cashAmount ? (
+            <>
+              <View>
+                <Text style={styles.fieldLabel}>Redeemed from Allowance</Text>
+                <View style={styles.readOnlyInput}>
+                  <Text style={styles.readOnlyValue}>{formatMoney(transaction.amount)}</Text>
+                </View>
+              </View>
+              <View>
+                <Text style={styles.fieldLabel}>Paid by Cash</Text>
+                <View style={styles.readOnlyInput}>
+                  <Text style={styles.readOnlyValue}>{formatMoney(transaction.cashAmount)}</Text>
+                </View>
+              </View>
+            </>
+          ) : (
+            <View>
+              <Text style={styles.fieldLabel}>Final Amount</Text>
+              <View style={styles.readOnlyInput}>
+                <Text style={styles.readOnlyValue}>{formatMoney(transaction.amount)}</Text>
+              </View>
             </View>
-          </View>
+          )}
 
           {transaction.reconciliationCode ? (
             <View>
@@ -89,7 +107,9 @@ export default function TransactionDetailScreen() {
 
           <Card tone="gold" style={styles.totalCard}>
             <Text style={styles.totalLabel}>Total</Text>
-            <Text style={styles.totalValue}>₹{transaction.amount.toLocaleString("en-IN")}</Text>
+            <Text style={styles.totalValue}>
+              {formatMoney(transaction.amount + (transaction.cashAmount ?? 0))}
+            </Text>
           </Card>
         </ScrollView>
       )}

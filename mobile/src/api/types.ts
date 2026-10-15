@@ -15,12 +15,15 @@ export interface CurrentBalance {
   allowance: number;
   used: number;
   remaining: number;
+  validFrom: string | null; // YYYY-MM-DD; null = no limit on that side
+  validTo: string | null;
 }
 
 export interface Transaction {
   id: string;
   outlet: string;
   amount: number;
+  cashAmount: number | null;
   billNo: string | null;
   occurredAt: string;
   notes: string | null;

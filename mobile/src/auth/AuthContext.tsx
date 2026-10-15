@@ -134,7 +134,14 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     } catch {
       // best-effort
     }
-    await clearAllAuthData();
+    try {
+      await clearAllAuthData();
+    } catch {
+      // best-effort (e.g. Android Keystore invalidated by an OS/security-
+      // setting change) - still force the in-memory auth state below so the
+      // UI doesn't get stuck mid-sign-out even if secure storage couldn't
+      // be cleared.
+    }
     setAuthToken(null);
     setIsAuthenticated(false);
     setProfile(null);

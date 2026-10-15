@@ -2,6 +2,7 @@ import React from "react";
 import { View, Text, StyleSheet, Pressable } from "react-native";
 import { UtensilsCrossed } from "lucide-react-native";
 import { colors, radii, spacing, shadows, type as t } from "../theme/tokens";
+import { formatMoney } from "../utils/money";
 import type { Transaction } from "../api/types";
 
 function formatRelativeDay(iso: string): string {
@@ -39,7 +40,12 @@ export function TransactionRow({
           <Text style={styles.otp}>{transaction.reconciliationCode}</Text>
         ) : null}
       </View>
-      <Text style={styles.amount}>₹{transaction.amount}</Text>
+      <View style={styles.amountBlock}>
+        <Text style={styles.amount}>{formatMoney(transaction.amount)}</Text>
+        {transaction.cashAmount ? (
+          <Text style={styles.cashNote}>+{formatMoney(transaction.cashAmount)} cash</Text>
+        ) : null}
+      </View>
     </Wrapper>
   );
 }
@@ -85,8 +91,16 @@ const styles = StyleSheet.create({
     color: colors.goldText,
     letterSpacing: 1,
   },
+  amountBlock: {
+    alignItems: "flex-end",
+  },
   amount: {
     ...t.bodyMedium,
     color: colors.textPrimary,
+  },
+  cashNote: {
+    ...t.caption,
+    color: colors.textMuted,
+    marginTop: 2,
   },
 });

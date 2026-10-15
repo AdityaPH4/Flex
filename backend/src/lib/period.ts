@@ -1,4 +1,6 @@
 import { prisma } from "../db";
+import { roundMoney } from "./money";
+import { effectiveAllowance } from "./lastDay";
 import type { Prisma, PrismaClient } from "@prisma/client";
 
 type Db = PrismaClient | Prisma.TransactionClient;
@@ -65,7 +67,8 @@ export interface EmployeeCurrentBalance {
   dateOfJoining: Date | null;
   walletValidFrom: Date | null;
   walletValidTo: Date | null;
-  allowance: number;
+  lastWorkingDay: Date | null;
+  allowance: number; // already prorated when lastWorkingDay falls in this month
   used: number;
   remaining: number;
 }
@@ -97,8 +100,14 @@ export async function listCurrentBalancesForActiveEmployees(
 
   return employees.map((employee) => {
     const period = periodByEmployeeId.get(employee.id);
-    const allowance = period?.allowance ?? employee.role.monthlyAllowance;
-    const used = period?.used ?? 0;
+    const used = Number(period?.used ?? 0);
+    const allowance = effectiveAllowance(
+      Number(period?.allowance ?? employee.role.monthlyAllowance),
+      employee.lastWorkingDay,
+      year,
+      month,
+      used
+    );
     return {
       employeeId: employee.id,
       employeeCode: employee.employeeCode,
@@ -115,9 +124,10 @@ export async function listCurrentBalancesForActiveEmployees(
       dateOfJoining: employee.dateOfJoining,
       walletValidFrom: employee.walletValidFrom,
       walletValidTo: employee.walletValidTo,
+      lastWorkingDay: employee.lastWorkingDay,
       allowance,
       used,
-      remaining: allowance - used,
+      remaining: Math.max(0, roundMoney(allowance - used)),
     };
   });
 }

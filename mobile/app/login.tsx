@@ -6,7 +6,7 @@ import { useAuth } from "@/auth/AuthContext";
 import { ApiError } from "@/api/client";
 import { PrimaryButton } from "@/components/PrimaryButton";
 import { InstallAppBanner } from "@/components/InstallAppBanner";
-import { colors, spacing, type as t } from "@/theme/tokens";
+import { colors, spacing, type as t, fontFamily } from "@/theme/tokens";
 
 // The native Google Sign-In package has no real web implementation (see
 // AuthContext.tsx) - on web, sign-in instead goes through Google's own
@@ -82,7 +82,27 @@ export default function LoginScreen() {
         });
         const node = webButtonRef.current as unknown as HTMLElement | null;
         if (node) {
-          google.accounts.id.renderButton(node, { theme: "outline", size: "large", width: 320 });
+          // Google's own button only offers fixed size tiers (no custom
+          // pixel height) - rendered intrinsically narrower here, then
+          // visually scaled up by the wrapping view below (see
+          // styles.scaledButton), so the final on-screen size is bigger
+          // than Google's native "large" rendering without needing a
+          // pixel-height option that doesn't exist. `width` here controls
+          // the final box width independently of the scale factor (final
+          // width = this width * the scale); the scale factor alone
+          // controls the final text/logo/height size. 200 is Google's
+          // documented minimum - kept deliberately narrow so the scaled
+          // result (200*1.4=280) still fits inside the content area's
+          // padding even on a ~320px-wide screen, since the scale transform
+          // doesn't reserve extra layout space for the visual overflow it
+          // creates (unlike width, which Google's own layout does respect).
+          google.accounts.id.renderButton(node, {
+            theme: "filled_blue",
+            size: "large",
+            width: 200,
+            shape: "pill",
+            text: "signin_with",
+          });
         }
       })
       .catch(() => setError("Couldn't load Google Sign-In. Check your connection and try again."));
@@ -107,26 +127,29 @@ export default function LoginScreen() {
   return (
     <SafeAreaView style={styles.screen}>
       <View style={styles.content}>
-        <View style={{ gap: spacing.lg }}>
-          <InstallAppBanner />
+        <InstallAppBanner />
 
-          <Text style={styles.eyebrow}>TOIT EMPLOYEE BENEFITS</Text>
-          <Text style={styles.title}>Sign in</Text>
-          <Text style={styles.subtitle}>
-            Use the Google account registered with HR to see your benefits.
-          </Text>
+        <Text style={styles.brandName}>TREAT</Text>
+        <Text style={styles.brandTagline}>Employee Spending Allowances app</Text>
+        <Text style={styles.subtitle}>Sign in using your registered company Google account</Text>
 
-          {error ? <Text style={styles.error}>{error}</Text> : null}
-        </View>
+        {error ? <Text style={styles.error}>{error}</Text> : null}
 
         {Platform.OS === "web" ? (
           <View style={styles.webButtonWrap}>
-            {loading ? (
-              <PrimaryButton label="Signing in..." onPress={() => {}} loading disabled />
-            ) : (
-              // Google's own script renders its real button into this node -
-              // see the useEffect above. Left empty until then.
+            {/* Always mounted, never swapped out for <PrimaryButton> - the
+                renderButton effect above only ever fires once (its deps never
+                change), so if this node were unmounted (e.g. while loading)
+                and later remounted, Google's button would never come back,
+                permanently stranding the person with no way to sign in.
+                Loading state is shown as an overlay on top instead. */}
+            <View style={styles.scaledButton}>
               <View ref={webButtonRef} />
+            </View>
+            {loading && (
+              <View style={styles.loadingOverlay}>
+                <PrimaryButton label="Signing in..." onPress={() => {}} loading disabled />
+              </View>
             )}
           </View>
         ) : (
@@ -139,31 +162,51 @@ export default function LoginScreen() {
 
 const styles = StyleSheet.create({
   screen: { flex: 1, backgroundColor: colors.bg },
-  webButtonWrap: { alignItems: "center" },
+  webButtonWrap: {
+    alignItems: "center",
+    width: "100%",
+    paddingVertical: spacing.lg,
+    position: "relative",
+  },
+  // transform doesn't reserve extra layout space for the scaled-up result,
+  // so the wrap above adds vertical padding as breathing room for it.
+  scaledButton: { transform: [{ scale: 1.4 }] },
+  loadingOverlay: {
+    position: "absolute",
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: colors.bg,
+  },
   content: {
     flex: 1,
-    justifyContent: "space-between",
     padding: spacing.xl,
     paddingTop: spacing.xxxl,
+    gap: spacing.lg,
   },
-  eyebrow: {
-    ...t.label,
-    color: colors.goldText,
-    marginBottom: spacing.md,
-  },
-  title: {
-    ...t.h1,
+  brandName: {
+    ...t.heroNumber,
+    fontSize: 46,
+    lineHeight: 50,
     color: colors.textPrimary,
-    marginBottom: spacing.sm,
+  },
+  brandTagline: {
+    fontFamily: fontFamily.displayMedium,
+    fontSize: 20,
+    color: colors.goldText,
+    marginTop: spacing.xs,
   },
   subtitle: {
     ...t.body,
+    fontSize: 17,
     color: colors.textSecondary,
-    marginBottom: spacing.xl,
+    marginBottom: spacing.md,
   },
   error: {
     ...t.caption,
     color: colors.danger,
-    marginTop: spacing.md,
   },
 });

@@ -1,28 +1,36 @@
 import React, { useCallback, useState } from "react";
-import { View, Text, StyleSheet, ScrollView, RefreshControl, ActivityIndicator } from "react-native";
+import { View, Text, StyleSheet, ScrollView, RefreshControl, ActivityIndicator, Pressable } from "react-native";
 import { useRouter, useFocusEffect } from "expo-router";
 import { SafeAreaView } from "react-native-safe-area-context";
-import { ReceiptText, History as HistoryIcon, Wallet, TrendingDown } from "lucide-react-native";
+import { ReceiptText, History as HistoryIcon, Wallet, TrendingDown, LogOut, CalendarClock } from "lucide-react-native";
 import { useAuth } from "@/auth/AuthContext";
 import { useIsOnline } from "@/api/useIsOnline";
-import { api } from "@/api/client";
+import { api, ApiError } from "@/api/client";
 import type { CurrentBalance, Transaction } from "@/api/types";
 import { Card } from "@/components/Card";
 import { QuickAction } from "@/components/QuickAction";
 import { TransactionRow } from "@/components/TransactionRow";
 import { OfflineBanner } from "@/components/OfflineBanner";
 import { InstallAppBanner } from "@/components/InstallAppBanner";
-import { colors, radii, spacing, type as t } from "@/theme/tokens";
+import { ConfirmDialog } from "@/components/ConfirmDialog";
+import { formatMoney } from "@/utils/money";
+import { colors, radii, shadows, spacing, type as t } from "@/theme/tokens";
+
+// "2026-10-31" -> "31 Oct 2026". Parsed as UTC so the day never shifts with the phone's timezone.
+const formatDay = (ymd: string) =>
+  new Date(`${ymd}T00:00:00Z`).toLocaleDateString("en-IN", { day: "numeric", month: "short", year: "numeric", timeZone: "UTC" });
 
 export default function HomeScreen() {
   const router = useRouter();
   const isOnline = useIsOnline();
-  const { isBootstrapping } = useAuth();
+  const { isBootstrapping, logout } = useAuth();
 
   const [balance, setBalance] = useState<CurrentBalance | null>(null);
   const [recent, setRecent] = useState<Transaction[]>([]);
   const [refreshing, setRefreshing] = useState(false);
   const [loadError, setLoadError] = useState(false);
+  const [loggingOut, setLoggingOut] = useState(false);
+  const [showSignOutConfirm, setShowSignOutConfirm] = useState(false);
   // Distinguishes "first ever load on this screen" from "already showed
   // data once, now quietly refreshing in the background" - only the first
   // one should show a full loading state. A slow network/busy server (a
@@ -37,12 +45,21 @@ export default function HomeScreen() {
       setBalance(bal);
       setRecent(txns.transactions.slice(0, 3));
       setLoadError(false);
-    } catch {
+    } catch (err) {
+      // A 401 here means the session itself is dead (expired, revoked, or
+      // the employee was deactivated) - not a network blip. Showing the
+      // generic offline banner forever would be misleading and leave the
+      // person stuck; sign out and let the auth redirect send them to
+      // /login instead.
+      if (err instanceof ApiError && err.status === 401) {
+        await logout();
+        return;
+      }
       setLoadError(true);
     } finally {
       setHasLoadedOnce(true);
     }
-  }, []);
+  }, [logout]);
 
   useFocusEffect(
     useCallback(() => {
@@ -64,6 +81,12 @@ export default function HomeScreen() {
     setRefreshing(false);
   };
 
+  const onConfirmSignOut = async () => {
+    setShowSignOutConfirm(false);
+    setLoggingOut(true);
+    await logout();
+  };
+
   if (!hasLoadedOnce) {
     return (
       <SafeAreaView style={styles.screen} edges={["top"]}>
@@ -82,10 +105,24 @@ export default function HomeScreen() {
         refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={colors.gold} />}
       >
         <View style={styles.brandRow}>
-          <Text style={styles.brandName}>TREAT</Text>
-          <View style={styles.versionBadge}>
-            <Text style={styles.versionBadgeText}>v1</Text>
+          <View style={styles.brandGroup}>
+            <Text style={styles.brandName}>TREAT</Text>
+            <View style={styles.versionBadge}>
+              <Text style={styles.versionBadgeText}>v1</Text>
+            </View>
           </View>
+          <Pressable
+            onPress={() => setShowSignOutConfirm(true)}
+            disabled={loggingOut}
+            hitSlop={8}
+            style={({ pressed }) => [styles.signOutButton, pressed && styles.signOutButtonPressed]}
+          >
+            {loggingOut ? (
+              <ActivityIndicator size="small" color={colors.textMuted} />
+            ) : (
+              <LogOut size={18} color={colors.textMuted} />
+            )}
+          </Pressable>
         </View>
 
         <InstallAppBanner />
@@ -98,7 +135,7 @@ export default function HomeScreen() {
         <Card tone="gold" style={styles.heroCard}>
           <Text style={styles.heroLabel}>Remaining this month</Text>
           <Text style={styles.heroNumber}>
-            ₹{balance ? balance.remaining.toLocaleString("en-IN") : "—"}
+            {balance ? formatMoney(balance.remaining) : "—"}
           </Text>
         </Card>
 
@@ -108,7 +145,7 @@ export default function HomeScreen() {
               <Wallet size={18} color={colors.sageText} />
             </View>
             <Text style={styles.statValue}>
-              ₹{balance ? balance.allowance.toLocaleString("en-IN") : "—"}
+              {balance ? formatMoney(balance.allowance) : "—"}
             </Text>
             <Text style={styles.statLabel}>Monthly allowance</Text>
           </Card>
@@ -117,20 +154,42 @@ export default function HomeScreen() {
               <TrendingDown size={18} color={colors.textSecondary} />
             </View>
             <Text style={styles.statValue}>
-              ₹{balance ? balance.used.toLocaleString("en-IN") : "—"}
+              {balance ? formatMoney(balance.used) : "—"}
             </Text>
             <Text style={styles.statLabel}>Used</Text>
           </Card>
         </View>
 
         <View style={styles.quickActionsRow}>
-          <QuickAction
-            icon={ReceiptText}
-            label="Add Payment"
-            tone="gold"
-            onPress={() => router.push("/record-benefit")}
-          />
-          <QuickAction icon={HistoryIcon} label="History" tone="sage" onPress={() => router.push("/(tabs)/history")} />
+          <View style={styles.quickActions}>
+            <QuickAction
+              icon={ReceiptText}
+              label="Add Payment"
+              tone="gold"
+              onPress={() => router.push("/record-benefit")}
+            />
+            <QuickAction icon={HistoryIcon} label="History" tone="sage" onPress={() => router.push("/(tabs)/history")} />
+          </View>
+          <Card tone="neutral" style={styles.validityCard}>
+            <View style={styles.validityHead}>
+              <CalendarClock size={16} color={colors.goldText} />
+              <Text style={styles.validityTitle}>Validity</Text>
+            </View>
+            {balance && (balance.validFrom || balance.validTo) ? (
+              <>
+                <Text style={styles.validityLine}>
+                  <Text style={styles.validityKey}>From </Text>
+                  {balance.validFrom ? formatDay(balance.validFrom) : "—"}
+                </Text>
+                <Text style={styles.validityLine}>
+                  <Text style={styles.validityKey}>To </Text>
+                  {balance.validTo ? formatDay(balance.validTo) : "No end date"}
+                </Text>
+              </>
+            ) : (
+              <Text style={styles.validityLine}>{balance ? "No time limit" : "—"}</Text>
+            )}
+          </Card>
         </View>
 
         <View style={styles.sectionHeader}>
@@ -146,13 +205,28 @@ export default function HomeScreen() {
           ) : (
             recent.map((txn, i) => (
               <View key={txn.id}>
-                <TransactionRow transaction={txn} />
+                <TransactionRow
+                  transaction={txn}
+                  onPress={() =>
+                    router.push({ pathname: "/transaction-detail", params: { transaction: JSON.stringify(txn) } })
+                  }
+                />
                 {i < recent.length - 1 && <View style={styles.rowDivider} />}
               </View>
             ))
           )}
         </Card>
       </ScrollView>
+
+      <ConfirmDialog
+        visible={showSignOutConfirm}
+        title="Sign out?"
+        message="You'll need to sign in with Google again to sign back in."
+        actions={[
+          { label: "Cancel", variant: "secondary", onPress: () => setShowSignOutConfirm(false) },
+          { label: "Sign out", onPress: onConfirmSignOut },
+        ]}
+      />
     </SafeAreaView>
   );
 }
@@ -162,7 +236,8 @@ const styles = StyleSheet.create({
   loadingFill: { flex: 1, alignItems: "center", justifyContent: "center", gap: spacing.md },
   loadingText: { ...t.body, color: colors.textSecondary },
   scrollContent: { padding: spacing.lg, paddingBottom: spacing.xxxl, gap: spacing.lg },
-  brandRow: { flexDirection: "row", alignItems: "center", gap: spacing.sm },
+  brandRow: { flexDirection: "row", alignItems: "center", justifyContent: "space-between" },
+  brandGroup: { flexDirection: "row", alignItems: "center", gap: spacing.sm },
   brandName: { ...t.h1, color: colors.textPrimary, letterSpacing: 1 },
   versionBadge: {
     backgroundColor: colors.goldSoft,
@@ -171,6 +246,16 @@ const styles = StyleSheet.create({
     paddingVertical: 2,
   },
   versionBadgeText: { ...t.label, color: colors.goldText, textTransform: "uppercase" },
+  signOutButton: {
+    width: 36,
+    height: 36,
+    borderRadius: radii.pill,
+    backgroundColor: colors.surface,
+    alignItems: "center",
+    justifyContent: "center",
+    ...shadows.row,
+  },
+  signOutButtonPressed: { opacity: 0.7 },
   heroCard: { gap: spacing.sm },
   heroLabel: { ...t.label, color: colors.goldText, textTransform: "uppercase" },
   heroNumber: { ...t.heroNumber, color: colors.goldText },
@@ -179,7 +264,13 @@ const styles = StyleSheet.create({
   statIconRow: { marginBottom: spacing.xs },
   statValue: { ...t.h2, color: colors.textPrimary },
   statLabel: { ...t.caption, color: colors.textMuted },
-  quickActionsRow: { flexDirection: "row", gap: spacing.md },
+  quickActionsRow: { flexDirection: "row", alignItems: "center", gap: spacing.md },
+  quickActions: { flex: 1, flexDirection: "row", gap: spacing.sm },
+  validityCard: { flex: 1.15, padding: spacing.md, gap: spacing.xs },
+  validityHead: { flexDirection: "row", alignItems: "center", gap: spacing.xs },
+  validityTitle: { ...t.label, color: colors.goldText, textTransform: "uppercase" },
+  validityLine: { ...t.caption, color: colors.textPrimary },
+  validityKey: { color: colors.textMuted },
   sectionHeader: { flexDirection: "row", justifyContent: "space-between", alignItems: "center" },
   sectionTitle: { ...t.h2, color: colors.textPrimary },
   sectionLink: { ...t.caption, color: colors.goldText },

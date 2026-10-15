@@ -5,7 +5,9 @@ import { prisma } from "../db";
 import { env } from "../env";
 import { requireAuth, type AuthedRequest } from "../middleware/auth";
 import { getOrCreatePeriod } from "../lib/period";
-import { recordBenefitSpend, InsufficientBalanceError, WalletNotValidError } from "../lib/spend";
+import { recordBenefitSpend, InsufficientBalanceError, WalletNotValidError, EmployeeInactiveError } from "../lib/spend";
+import { roundMoney } from "../lib/money";
+import { effectiveAllowance, lastDayEnds } from "../lib/lastDay";
 import type { Prisma } from "@prisma/client";
 
 type TransactionWithOutlet = Prisma.BenefitTransactionGetPayload<{
@@ -47,12 +49,24 @@ meRouter.get("/", async (req: AuthedRequest, res) => {
 
 meRouter.get("/benefits/current", async (req: AuthedRequest, res) => {
   const period = await getOrCreatePeriod(prisma, req.auth!.employeeId);
+  const { walletValidFrom, walletValidTo, lastWorkingDay } = await prisma.employee.findUniqueOrThrow({
+    where: { id: req.auth!.employeeId },
+    select: { walletValidFrom: true, walletValidTo: true, lastWorkingDay: true },
+  });
+  const used = Number(period.used);
+  const allowance = effectiveAllowance(Number(period.allowance), lastWorkingDay, period.year, period.month, used);
+  const ended = !!lastWorkingDay && Date.now() >= lastDayEnds(lastWorkingDay).getTime();
+  const day = (d: Date | null) => (d ? d.toISOString().slice(0, 10) : null); // YYYY-MM-DD, same as the admin export
+  // The wallet ends at whichever comes first.
+  const validTo = [day(walletValidTo), day(lastWorkingDay)].filter(Boolean).sort()[0] ?? null;
   res.json({
     year: period.year,
     month: period.month,
-    allowance: period.allowance,
-    used: period.used,
-    remaining: period.allowance - period.used,
+    allowance,
+    used,
+    remaining: ended ? 0 : Math.max(0, roundMoney(allowance - used)),
+    validFrom: day(walletValidFrom),
+    validTo,
   });
 });
 
@@ -96,7 +110,8 @@ meRouter.get("/benefits/transactions", async (req: AuthedRequest, res) => {
     transactions: page.map((t: TransactionWithOutlet) => ({
       id: t.id,
       outlet: t.outlet?.name ?? t.outletName ?? "TOIT",
-      amount: t.amount,
+      amount: Number(t.amount),
+      cashAmount: t.cashAmount != null ? Number(t.cashAmount) : null,
       billNo: t.billNo,
       occurredAt: t.occurredAt,
       notes: t.notes,
@@ -107,9 +122,19 @@ meRouter.get("/benefits/transactions", async (req: AuthedRequest, res) => {
   });
 });
 
+// 1,000,000 rupees is already far beyond any plausible single purchase at a
+// restaurant/retail outlet - this is purely a sanity ceiling, not a real
+// spending limit (that's what the allowance balance check is for). It
+// exists to reject an obviously-wrong input (a fat-fingered extra zero, or
+// a deliberately huge cashAmount - which is never checked against the
+// balance, so nothing else would catch it) with a clear validation error,
+// well clear of the BenefitTransaction.amount/cashAmount Decimal(10,2)
+// columns' actual overflow point (99,999,999.99).
+const MAX_SANE_AMOUNT = 1_000_000;
+
 const createTransactionSchema = z.object({
-  amount: z.number().int().positive(),
-  cashAmount: z.number().int().nonnegative().optional(),
+  amount: z.number().positive().multipleOf(0.01).max(MAX_SANE_AMOUNT),
+  cashAmount: z.number().nonnegative().multipleOf(0.01).max(MAX_SANE_AMOUNT).optional(),
   outletId: z.string().uuid().optional(),
   outletName: z.string().trim().min(1).max(120),
   billNo: z.string().trim().max(120).optional(),
@@ -141,16 +166,19 @@ meRouter.post("/benefits/transactions", async (req: AuthedRequest, res) => {
       idempotencyKey: body.idempotencyKey,
     });
     const period = await getOrCreatePeriod(prisma, req.auth!.employeeId, txn.occurredAt);
+    const lwd = (await prisma.employee.findUniqueOrThrow({ where: { id: req.auth!.employeeId }, select: { lastWorkingDay: true } })).lastWorkingDay;
+    const used = Number(period.used);
+    const allowance = effectiveAllowance(Number(period.allowance), lwd, period.year, period.month, used);
     res.status(201).json({
       transaction: {
         id: txn.id,
-        amount: txn.amount,
+        amount: Number(txn.amount),
         occurredAt: txn.occurredAt,
       },
       balance: {
-        allowance: period.allowance,
-        used: period.used,
-        remaining: period.allowance - period.used,
+        allowance,
+        used,
+        remaining: Math.max(0, roundMoney(allowance - used)),
       },
     });
   } catch (err) {
@@ -159,6 +187,12 @@ meRouter.post("/benefits/transactions", async (req: AuthedRequest, res) => {
     }
     if (err instanceof WalletNotValidError) {
       return res.status(403).json({ error: "wallet_not_valid" });
+    }
+    if (err instanceof EmployeeInactiveError) {
+      // Same status/code requireAuth already uses for this exact situation,
+      // so the mobile client's existing "a 401 means the session is dead,
+      // sign out" handling covers this automatically too.
+      return res.status(401).json({ error: "employee_inactive" });
     }
     throw err;
   }
@@ -208,8 +242,8 @@ meRouter.post("/benefits/reconciliation-code", async (req: AuthedRequest, res) =
     context =
       context ??
       (txn.cashAmount
-        ? `${txn.outletName ?? "TOIT"} · ₹${txn.amount} + ₹${txn.cashAmount} cash`
-        : `${txn.outletName ?? "TOIT"} · ₹${txn.amount}`);
+        ? `${txn.outletName ?? "TOIT"} · ₹${Number(txn.amount)} + ₹${Number(txn.cashAmount)} cash`
+        : `${txn.outletName ?? "TOIT"} · ₹${Number(txn.amount)}`);
   }
 
   const expiresAt = new Date(Date.now() + env.reconciliationCodeTtlSeconds * 1000);

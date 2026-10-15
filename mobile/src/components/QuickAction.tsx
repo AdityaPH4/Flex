@@ -51,5 +51,6 @@ const styles = StyleSheet.create({
   label: {
     ...t.caption,
     color: colors.textSecondary,
+    textAlign: "center",
   },
 });

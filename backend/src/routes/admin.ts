@@ -5,7 +5,9 @@ import { prisma } from "../db";
 import { env } from "../env";
 import { signAdminToken } from "../lib/jwt";
 import { requireAdmin } from "../middleware/adminAuth";
-import { listCurrentBalancesForActiveEmployees } from "../lib/period";
+import { getOrCreatePeriod, listCurrentBalancesForActiveEmployees } from "../lib/period";
+import { effectiveAllowance } from "../lib/lastDay";
+import { roundMoney } from "../lib/money";
 
 export const adminRouter = Router();
 
@@ -18,14 +20,34 @@ function constantTimeEquals(a: string, b: string): boolean {
 
 const loginSchema = z.object({ password: z.string().min(1) });
 
+// Login throttle: 5 wrong passwords from one address and that address is locked
+// out for 8 hours. In memory (a server restart clears it) and keyed on req.ip,
+// which is the real client address behind Caddy (see "trust proxy" in server.ts).
+const MAX_FAILED_LOGINS = 5;
+const LOCKOUT_MS = 8 * 60 * 60 * 1000;
+const failedLogins = new Map<string, { count: number; lockedUntil: number }>();
+
 adminRouter.post("/login", (req, res) => {
   const parsed = loginSchema.safeParse(req.body);
   if (!parsed.success) {
     return res.status(400).json({ error: "invalid_body" });
   }
-  if (!env.adminPassword || !constantTimeEquals(parsed.data.password, env.adminPassword)) {
-    return res.status(401).json({ error: "invalid_password" });
+  const now = Date.now();
+  const key = req.ip ?? "unknown";
+  const entry = failedLogins.get(key);
+  if (entry && entry.lockedUntil > now) {
+    return res.status(429).json({
+      error: "too_many_attempts",
+      retryAfterSeconds: Math.ceil((entry.lockedUntil - now) / 1000),
+    });
   }
+  if (!env.adminPassword || !constantTimeEquals(parsed.data.password, env.adminPassword)) {
+    // A lock that has run out starts a fresh count.
+    const count = (entry && entry.lockedUntil === 0 ? entry.count : 0) + 1;
+    failedLogins.set(key, { count: count >= MAX_FAILED_LOGINS ? 0 : count, lockedUntil: count >= MAX_FAILED_LOGINS ? now + LOCKOUT_MS : 0 });
+    return res.status(401).json({ error: "invalid_password", attemptsLeft: Math.max(0, MAX_FAILED_LOGINS - count) });
+  }
+  failedLogins.delete(key);
   const token = signAdminToken();
   res.json({ token, expiresInHours: env.adminSessionTtlHours });
 });
@@ -36,6 +58,23 @@ adminRouter.use(requireAdmin);
 adminRouter.get("/employees", async (_req, res) => {
   const balances = await listCurrentBalancesForActiveEmployees(prisma);
   res.json({ employees: balances });
+});
+
+// Takes back whatever is left of this month's balance for someone who is
+// leaving: the period's allowance is lowered to exactly what they've used, so
+// remaining becomes 0. Only for an employee already marked as leaving (a last
+// working day came in with the roster upload) - it can't be pointed at an ordinary employee by mistake.
+// Not reversible from here (restoring is a manual top-up), by design.
+adminRouter.post("/employees/:employeeCode/revoke-balance", async (req, res) => {
+  const employee = await prisma.employee.findUnique({ where: { employeeCode: req.params.employeeCode } });
+  if (!employee) return res.status(404).json({ error: "employee_not_found" });
+  if (!employee.lastWorkingDay) return res.status(409).json({ error: "set_last_working_day_first" });
+
+  const period = await getOrCreatePeriod(prisma, employee.id);
+  const revoked = roundMoney(Math.max(0, effectiveAllowance(Number(period.allowance), employee.lastWorkingDay, period.year, period.month) - Number(period.used)));
+  await prisma.benefitPeriod.update({ where: { id: period.id }, data: { allowance: period.used } });
+  console.log(`[admin] revoked balance of ${revoked} for ${employee.employeeCode} (${period.year}-${period.month})`);
+  res.json({ employeeCode: employee.employeeCode, revoked, remaining: 0 });
 });
 
 // Persistent "this month's roster changes" - unlike the joiners/leavers echoed
@@ -104,6 +143,18 @@ function parseFlexibleDate(raw: string | undefined): Date | null {
   return Number.isNaN(fallback.getTime()) ? null : fallback;
 }
 
+// Last working day: a calendar day, stored as that date at 00:00 UTC (@db.Date).
+// parseFlexibleDate builds local-time dates, so read its year/month/day back out.
+function parseDay(raw: string): Date | null {
+  const iso = raw.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (iso) {
+    const d = new Date(Date.UTC(Number(iso[1]), Number(iso[2]) - 1, Number(iso[3])));
+    return d.toISOString().startsWith(raw) ? d : null;
+  }
+  const d = parseFlexibleDate(raw);
+  return d ? new Date(Date.UTC(d.getFullYear(), d.getMonth(), d.getDate())) : null;
+}
+
 function parseFlexibleBoolean(raw: string | undefined): boolean {
   if (!raw) return false;
   return ["1", "true", "yes", "y"].includes(raw.trim().toLowerCase());
@@ -131,6 +182,7 @@ adminRouter.get("/employees/export", async (_req, res) => {
       Grade: b.grade ?? "",
       DOJ: b.dateOfJoining ? b.dateOfJoining.toISOString().slice(0, 10) : "",
       "Cost Center": b.homeOutlet ?? "",
+      LWD: b.lastWorkingDay ? b.lastWorkingDay.toISOString().slice(0, 10) : "",
     })),
   });
 });
@@ -144,7 +196,7 @@ const importRowSchema = z.object({
   customer_name: z.string().trim().min(1),
   email_id: z.string().trim().email(),
   ref_no: z.string().trim().min(1),
-  amount: z.coerce.number().int().positive(),
+  amount: z.coerce.number().positive().multipleOf(0.01),
   phone_number: z.string().trim().min(1),
   "Cost Center": z.string().trim().min(1),
   // Not z.coerce.number() alone - an empty cell would coerce to Number("") = 0,
@@ -161,6 +213,14 @@ const importRowSchema = z.object({
   valid_to: z.string().trim().min(1),
   Grade: z.string().trim().min(1),
   DOJ: z.string().trim().min(1),
+  // The one optional column: last working day, empty for everyone who isn't
+  // leaving. Column absent from the file = leave what is stored alone; column
+  // present = the file is the truth (an empty cell clears it).
+  LWD: z
+    .string()
+    .trim()
+    .refine((v) => v === "" || parseDay(v) !== null, "must be a date, e.g. 08-Oct-2026")
+    .optional(),
 });
 
 const importSchema = z.object({
@@ -251,6 +311,7 @@ adminRouter.post("/employees/import", async (req, res) => {
     Grade: string | null;
     DOJ: string | null;
     "Cost Center": string | null;
+    LWD: string | null;
     status: "created" | "updated" | "error";
     error?: string;
   };
@@ -290,6 +351,7 @@ adminRouter.post("/employees/import", async (req, res) => {
         dateOfJoining: parseFlexibleDate(data.DOJ),
         walletValidFrom: parseFlexibleDate(data.valid_from),
         walletValidTo: parseFlexibleDate(data.valid_to),
+        ...(data.LWD !== undefined ? { lastWorkingDay: data.LWD ? parseDay(data.LWD) : null } : {}),
         // Being present in ANY upload means active, full stop - this is what
         // lets a previously-deactivated employee (a false-positive leaver, or
         // someone who genuinely rejoined) come back to life simply by
@@ -323,6 +385,7 @@ adminRouter.post("/employees/import", async (req, res) => {
         Grade: data.Grade || null,
         DOJ: data.DOJ || null,
         "Cost Center": costCenter || null,
+        LWD: data.LWD || null,
         status: existing ? "updated" : "created",
       });
     } catch {
@@ -340,6 +403,7 @@ adminRouter.post("/employees/import", async (req, res) => {
         Grade: data.Grade || null,
         DOJ: data.DOJ || null,
         "Cost Center": costCenter || null,
+        LWD: data.LWD || null,
         status: "error",
         error: "Could not save this row.",
       });
@@ -514,7 +578,7 @@ const ledgerRowSchema = z.object({
   event: z.string().optional(),
   transactionId: z.string().optional(),
   paymentName: z.string().optional(),
-  amount: z.number().optional(),
+  amount: z.number().nullable().optional(),
   balance: z.number().optional(),
   dateTime: z.string().optional(),
   user: z.string().optional(),
@@ -553,7 +617,14 @@ adminRouter.post("/reconcile", async (req, res) => {
     return parsedDate ? `${parsedDate.getFullYear()}-${String(parsedDate.getMonth() + 1).padStart(2, "0")}` : null;
   });
 
-  const codes = [...new Set(rows.map((r) => r.otp.trim()))];
+  // Codes are generated zero-padded to 6 digits (me.ts), so ~10% of them
+  // legitimately start with one or more zeros. Re-pad here in case whatever
+  // produced the ledger export (e.g. Excel treating a numeric-looking OTP
+  // column as a number) silently dropped a leading zero - without this, a
+  // perfectly valid code like "005234" would never match a ledger value of
+  // "5234".
+  const normalizeOtp = (raw: string) => raw.trim().padStart(6, "0");
+  const codes = [...new Set(rows.map((r) => normalizeOtp(r.otp)))];
   const found = await prisma.reconciliationCode.findMany({
     where: { code: { in: codes } },
     include: { transaction: true },
@@ -566,7 +637,7 @@ adminRouter.post("/reconcile", async (req, res) => {
   }
 
   const results = rows.map((row, i) => {
-    const otp = row.otp.trim();
+    const otp = normalizeOtp(row.otp);
     const period = rowPeriods[i];
 
     let match: (typeof found)[number] | null = null;
@@ -583,13 +654,16 @@ adminRouter.post("/reconcile", async (req, res) => {
     }
 
     let reconciled = false;
+    const ourAmount = match?.transaction ? Number(match.transaction.amount) : null;
     if (match) {
       if (!match.transaction) {
         reason = "Code found but not linked to a specific transaction - can't verify amount.";
       } else if (row.amount == null) {
         reason = "Ledger row has no amount to compare.";
-      } else if (Math.round(row.amount) !== match.transaction.amount) {
-        reason = `Amount mismatch: ledger ₹${row.amount} vs our system ₹${match.transaction.amount}.`;
+      // Compare at cent precision (both sides can now carry 2 decimal
+      // places) rather than rounding to whole rupees first.
+      } else if (Math.round(row.amount * 100) !== Math.round(ourAmount! * 100)) {
+        reason = `Amount mismatch: ledger ₹${row.amount} vs our system ₹${ourAmount}.`;
       } else {
         reconciled = true;
       }
@@ -608,7 +682,7 @@ adminRouter.post("/reconcile", async (req, res) => {
       reason,
       employeeName: match?.employeeName ?? null,
       employeeCode: match?.employeeCode ?? null,
-      ourAmount: match?.transaction?.amount ?? null,
+      ourAmount,
     };
   });
 

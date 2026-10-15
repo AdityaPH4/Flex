@@ -26,4 +26,10 @@ export const env = {
   // rather than the whole server refusing to start).
   adminPassword: process.env.ADMIN_PASSWORD ?? "",
   adminSessionTtlHours: Number(process.env.ADMIN_SESSION_TTL_HOURS ?? 12),
+
+  // Cashier screen (/cashier): same idea as the admin dashboard - one shared
+  // password, and the screen simply stays locked if it's unset. Changing it
+  // signs every cashier device out (see lib/jwt.ts).
+  cashierPassword: process.env.CASHIER_PASSWORD ?? "",
+  cashierSessionTtlDays: Number(process.env.CASHIER_SESSION_TTL_DAYS ?? 14),
 };

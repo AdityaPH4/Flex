@@ -4,7 +4,7 @@ function getToken() { return localStorage.getItem(TOKEN_KEY); }
 function setToken(t) { localStorage.setItem(TOKEN_KEY, t); }
 function clearToken() { localStorage.removeItem(TOKEN_KEY); }
 
-function money(n) { return `₹${Number(n).toLocaleString("en-IN")}`; }
+function money(n) { return `₹${Number(n).toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`; }
 function dateOnly(iso) { return iso ? String(iso).slice(0, 10) : "—"; }
 
 async function api(path, options = {}) {
@@ -77,7 +77,14 @@ loginForm.addEventListener("submit", async (e) => {
     });
     const body = await res.json();
     if (!res.ok) {
-      loginError.textContent = "Incorrect password.";
+      if (res.status === 429) {
+        const hours = Math.max(1, Math.ceil((body.retryAfterSeconds || 28800) / 3600));
+        loginError.textContent = `Too many wrong attempts. Try again in about ${hours} hour${hours === 1 ? "" : "s"}.`;
+      } else if (body.attemptsLeft === 0) {
+        loginError.textContent = "Incorrect password. Too many attempts: sign-in is locked for 8 hours.";
+      } else {
+        loginError.textContent = `Incorrect password.${typeof body.attemptsLeft === "number" ? ` ${body.attemptsLeft} attempt${body.attemptsLeft === 1 ? "" : "s"} left.` : ""}`;
+      }
       loginError.classList.remove("hidden");
       return;
     }
@@ -123,6 +130,7 @@ async function loadEmployees() {
   const data = await api("/employees");
   allEmployees = data.employees;
   renderEmployees(allEmployees);
+  if (typeof renderRevoke === "function") renderRevoke();
 }
 
 function renderEmployees(list) {
@@ -139,6 +147,7 @@ function renderEmployees(list) {
     tr.innerHTML = `
       <td>${escapeHtml(e.name)}</td>
       <td>${escapeHtml(e.employeeCode)}</td>
+      <td>${dateOnly(e.lastWorkingDay)}</td>
       <td>${escapeHtml(e.email ?? "—")}</td>
       <td>${escapeHtml(e.phone || "—")}</td>
       <td>${escapeHtml(e.roleName)}</td>
@@ -157,12 +166,139 @@ function renderEmployees(list) {
   }
 }
 
-document.getElementById("employees-search").addEventListener("input", (e) => {
-  const q = e.target.value.trim().toLowerCase();
-  renderEmployees(
-    q ? allEmployees.filter((emp) => emp.employeeCode.toLowerCase().includes(q)) : allEmployees
-  );
+let searchBy = "code"; // "code" | "name"
+const employeesSearch = document.getElementById("employees-search");
+
+function applyEmployeeSearch() {
+  const q = employeesSearch.value.trim().toLowerCase();
+  const field = searchBy === "name" ? "name" : "employeeCode";
+  renderEmployees(q ? allEmployees.filter((emp) => emp[field].toLowerCase().includes(q)) : allEmployees);
+}
+
+employeesSearch.addEventListener("input", applyEmployeeSearch);
+
+document.querySelectorAll("[data-search-by]").forEach((btn) => {
+  btn.addEventListener("click", () => {
+    searchBy = btn.dataset.searchBy;
+    document.querySelectorAll("[data-search-by]").forEach((b) => b.classList.toggle("active", b === btn));
+    employeesSearch.placeholder = searchBy === "name" ? "Search by employee name" : "Search by employee code";
+    employeesSearch.focus();
+    applyEmployeeSearch();
+  });
 });
+
+// ---------------- Dialog ----------------
+
+// Our own confirm box (the browser's looks out of place). Resolves true on the
+// confirm button, false on Cancel, Escape or a click outside. `facts` is a list
+// of [label, value] pairs shown as a small summary. cancelLabel: null = no Cancel.
+function showDialog({ title, message, facts = [], confirmLabel = "OK", cancelLabel = "Cancel", danger = false }) {
+  const root = document.getElementById("dialog");
+  document.getElementById("dialog-title").textContent = title;
+  document.getElementById("dialog-message").textContent = message;
+  const factsEl = document.getElementById("dialog-facts");
+  factsEl.innerHTML = "";
+  for (const [label, value] of facts) {
+    const row = document.createElement("div");
+    const dt = document.createElement("dt"); dt.textContent = label;
+    const dd = document.createElement("dd"); dd.textContent = value;
+    row.append(dt, dd);
+    factsEl.append(row);
+  }
+  factsEl.classList.toggle("hidden", facts.length === 0);
+  root.classList.toggle("danger", danger);
+  const ok = document.getElementById("dialog-ok");
+  const cancel = document.getElementById("dialog-cancel");
+  ok.textContent = confirmLabel;
+  cancel.textContent = cancelLabel ?? "";
+  cancel.classList.toggle("hidden", cancelLabel === null);
+  root.classList.remove("hidden");
+  ok.focus();
+
+  return new Promise((resolve) => {
+    const done = (value) => {
+      root.classList.add("hidden");
+      ok.removeEventListener("click", onOk);
+      cancel.removeEventListener("click", onCancel);
+      root.removeEventListener("mousedown", onBackdrop);
+      document.removeEventListener("keydown", onKey);
+      resolve(value);
+    };
+    const onOk = () => done(true);
+    const onCancel = () => done(false);
+    const onBackdrop = (ev) => { if (ev.target === root) done(false); };
+    const onKey = (ev) => { if (ev.key === "Escape") done(false); };
+    ok.addEventListener("click", onOk);
+    cancel.addEventListener("click", onCancel);
+    root.addEventListener("mousedown", onBackdrop);
+    document.addEventListener("keydown", onKey);
+  });
+}
+
+// ---------------- Revoke balance ----------------
+
+const revokeSearch = document.getElementById("revoke-search");
+
+function renderRevoke() {
+  const q = revokeSearch.value.trim().toLowerCase();
+  const body = document.getElementById("revoke-body");
+  const empty = document.getElementById("revoke-empty");
+  body.innerHTML = "";
+  if (!q) {
+    empty.textContent = "Type a name or employee code to find someone.";
+    empty.classList.remove("hidden");
+    return;
+  }
+  const matches = allEmployees
+    .filter((e) => e.name.toLowerCase().includes(q) || e.employeeCode.toLowerCase().includes(q))
+    .slice(0, 25);
+  empty.textContent = "Nobody matches that.";
+  empty.classList.toggle("hidden", matches.length > 0);
+  for (const e of matches) {
+    const tr = document.createElement("tr");
+    tr.innerHTML = `
+      <td>${escapeHtml(e.name)}</td>
+      <td>${escapeHtml(e.employeeCode)}</td>
+      <td>${e.lastWorkingDay ? dateOnly(e.lastWorkingDay) : "—"}</td>
+      <td>${money(e.used)}</td>
+      <td>${money(e.remaining)}</td>
+      <td></td>
+    `;
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = "danger-button";
+    btn.textContent = "Revoke balance";
+    if (!e.lastWorkingDay) {
+      btn.disabled = true;
+      btn.title = "This employee has no LWD (last working day) in the roster upload";
+    } else if (!(e.remaining > 0)) {
+      btn.disabled = true;
+      btn.title = "Nothing left to revoke";
+    }
+    btn.addEventListener("click", async () => {
+      const go = await showDialog({
+        title: "Revoke balance?",
+        message: "Their remaining balance for this month becomes ₹0.00. This can't be undone from here.",
+        facts: [["Employee", `${e.name} (${e.employeeCode})`], ["Last working day", dateOnly(e.lastWorkingDay)], ["Amount revoked", money(e.remaining)]],
+        confirmLabel: "Revoke balance",
+        danger: true,
+      });
+      if (!go) return;
+      btn.disabled = true;
+      try {
+        await api(`/employees/${encodeURIComponent(e.employeeCode)}/revoke-balance`, { method: "POST" });
+        await loadEmployees();
+      } catch (err) {
+        if (err.message !== "unauthorized") await showDialog({ title: "Couldn't revoke the balance", message: "Something went wrong. Nothing was changed. Try again.", confirmLabel: "OK", cancelLabel: null });
+      }
+      renderRevoke();
+    });
+    tr.lastElementChild.append(btn);
+    body.appendChild(tr);
+  }
+}
+
+revokeSearch.addEventListener("input", renderRevoke);
 
 // ---------------- Import / Export ----------------
 
@@ -236,21 +372,25 @@ importRunButton.addEventListener("click", async () => {
   }
 });
 
-// Groups per-field issues by row so "Row 5 is missing Grade, DOJ" reads as
-// one line instead of one line per missing field. Capped so a file with a
-// systematically-missing column (every row affected) doesn't dump hundreds
-// of lines into the banner - the first 20 rows already show the pattern.
+// Groups per-field issues by row so "Row 5: Grade, DOJ" reads as one line
+// instead of one line per field. Capped so a file with a systematic problem
+// (every row affected) doesn't dump hundreds of lines into the banner - the
+// first 20 rows already show the pattern. Shows the real validation message
+// per field when zod provided one (e.g. "amount: Expected integer, received
+// float") rather than always saying "missing" - a present-but-invalid value
+// isn't actually missing, and saying so sends an admin looking for a blank
+// cell that was never the real problem.
 function formatMissingFieldsError(issues) {
   const byRow = new Map();
   for (const issue of issues) {
     const label = issue.wallet_no ? `Row ${issue.row} (${issue.wallet_no})` : `Row ${issue.row}`;
     if (!byRow.has(label)) byRow.set(label, []);
-    byRow.get(label).push(issue.field);
+    byRow.get(label).push(issue.message ? `${issue.field} (${issue.message})` : issue.field);
   }
-  const lines = [...byRow.entries()].map(([label, fields]) => `${label}: missing ${fields.join(", ")}`);
+  const lines = [...byRow.entries()].map(([label, fields]) => `${label}: ${fields.join(", ")}`);
   const shown = lines.slice(0, 20);
   const remaining = lines.length - shown.length;
-  const header = `Can't upload - ${byRow.size} row${byRow.size === 1 ? "" : "s"} missing required fields:`;
+  const header = `Can't upload - ${byRow.size} row${byRow.size === 1 ? "" : "s"} have invalid or missing fields:`;
   const footer = remaining > 0 ? `\n…and ${remaining} more row${remaining === 1 ? "" : "s"}.` : "";
   return `${header}\n${shown.join("\n")}${footer}`;
 }
@@ -287,6 +427,7 @@ function renderImportResults(data) {
       <td>${escapeHtml(r.valid_to || "—")}</td>
       <td>${escapeHtml(r.Grade || "—")}</td>
       <td>${escapeHtml(r.DOJ || "—")}</td>
+      <td>${escapeHtml(r.LWD || "—")}</td>
       <td>${statusPill}</td>
       <td>${escapeHtml(r.error ?? "—")}</td>
     `;
@@ -388,7 +529,17 @@ fileInput.addEventListener("change", () => {
           event: row["Event"] ? String(row["Event"]) : undefined,
           transactionId: row["Transaction Id"] ? String(row["Transaction Id"]) : undefined,
           paymentName: row["Payment Name"] ? String(row["Payment Name"]) : undefined,
-          amount: row["Amount"] != null && row["Amount"] !== "" ? Number(String(row["Amount"]).replace(/,/g, "")) : undefined,
+          // A non-numeric placeholder (e.g. "N/A"/"Pending" for a voided
+          // POS row) must become explicit null, not NaN - NaN silently
+          // turns into JSON null anyway once this is sent, but doing it on
+          // purpose here (rather than relying on that implicit behavior)
+          // keeps this row matching ledgerRowSchema's amount field, which
+          // accepts null but not a bare "number" that's secretly NaN.
+          amount: (() => {
+            if (row["Amount"] == null || row["Amount"] === "") return undefined;
+            const n = Number(String(row["Amount"]).replace(/,/g, ""));
+            return Number.isNaN(n) ? null : n;
+          })(),
           balance: row["Balance"] != null && row["Balance"] !== "" ? Number(String(row["Balance"]).replace(/,/g, "")) : undefined,
           dateTime: row["Date Time"] ? String(row["Date Time"]) : undefined,
           user: row["User"] ? String(row["User"]) : undefined,
@@ -420,8 +571,11 @@ runButton.addEventListener("click", async () => {
     reconcileData = data;
     reconcileSubtab = "reconciled";
     renderReconcileResults();
-  } catch {
-    reconcileError.textContent = "Reconciliation failed - check your connection and try again.";
+  } catch (err) {
+    reconcileError.textContent =
+      err.body?.error === "invalid_body"
+        ? "Reconciliation failed - one or more rows in this file have an invalid value (check the Amount column for non-numeric entries like \"N/A\")."
+        : "Reconciliation failed - check your connection and try again.";
     reconcileError.classList.remove("hidden");
   } finally {
     runButton.disabled = false;

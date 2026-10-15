@@ -15,11 +15,14 @@ import {
 import { useRouter } from "expo-router";
 import { SafeAreaView } from "react-native-safe-area-context";
 import * as Crypto from "expo-crypto";
-import { X, ChevronDown } from "lucide-react-native";
+import * as Clipboard from "expo-clipboard";
+import { X, ChevronDown, Copy, Check } from "lucide-react-native";
 import { api, ApiError } from "@/api/client";
+import { useAuth } from "@/auth/AuthContext";
 import { Card } from "@/components/Card";
 import { PrimaryButton } from "@/components/PrimaryButton";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
+import { formatMoney, roundMoney } from "@/utils/money";
 import { colors, radii, spacing, shadows, type as t } from "@/theme/tokens";
 
 interface Split {
@@ -35,8 +38,33 @@ function formatCode(code: string): string {
   return `${code.slice(0, 3)} ${code.slice(3)}`;
 }
 
+// Strips everything but digits and a single decimal point, capped at 2
+// decimal places - robust against a stray second "." (easy to fat-finger on
+// a numeric keypad), unlike a single regex pass which simply gives up and
+// leaves the raw text untouched the moment a second "." shows up.
+function cleanAmountInput(raw: string): string {
+  let cleaned = raw.replace(/[^0-9.]/g, "");
+  const firstDot = cleaned.indexOf(".");
+  if (firstDot !== -1) {
+    cleaned = cleaned.slice(0, firstDot + 1) + cleaned.slice(firstDot + 1).replace(/\./g, "");
+  }
+  const dot = cleaned.indexOf(".");
+  if (dot !== -1 && cleaned.length > dot + 3) {
+    cleaned = cleaned.slice(0, dot + 3);
+  }
+  return cleaned;
+}
+
 export default function RecordBenefitScreen() {
   const router = useRouter();
+  const { logout } = useAuth();
+  // Generated lazily on first submit attempt and REUSED across retries of
+  // the same logical payment (e.g. a dropped connection, or the insufficient-
+  // balance -> split-payment retry flow) - this is what makes the backend's
+  // idempotency guarantee ("safe to resend verbatim") actually hold in
+  // practice. Only cleared when the person edits the form afterward, since
+  // that means they're now entering a genuinely different payment.
+  const idempotencyKeyRef = useRef<string | null>(null);
   const [outletName, setOutletName] = useState("");
   const [outletPickerOpen, setOutletPickerOpen] = useState(false);
   const outletFieldRef = useRef<View>(null);
@@ -86,6 +114,14 @@ export default function RecordBenefitScreen() {
   const [code, setCode] = useState<string | null>(null);
   const [codeLoading, setCodeLoading] = useState(false);
   const [codeError, setCodeError] = useState<string | null>(null);
+  const [codeCopied, setCodeCopied] = useState(false);
+
+  const onCopyCode = async () => {
+    if (!code) return;
+    await Clipboard.setStringAsync(code);
+    setCodeCopied(true);
+    setTimeout(() => setCodeCopied(false), 1500);
+  };
 
   const total = parseFloat(amount) || 0;
 
@@ -120,12 +156,12 @@ export default function RecordBenefitScreen() {
     }
     try {
       const balance = await api.currentBalance();
-      if (Math.round(total) > balance.remaining) {
+      if (roundMoney(total) > balance.remaining) {
         if (balance.remaining <= 0) {
           setError("This would go over your remaining balance for the month.");
           return;
         }
-        setPendingRemaining(balance.remaining);
+        setPendingRemaining(roundMoney(balance.remaining));
         setShowSplitPrompt(true);
         return;
       }
@@ -137,13 +173,16 @@ export default function RecordBenefitScreen() {
   };
 
   const submitTransaction = async (spendAmount: number, cashAmount?: number) => {
+    if (!idempotencyKeyRef.current) {
+      idempotencyKeyRef.current = Crypto.randomUUID();
+    }
     const result = await api.recordTransaction({
       amount: spendAmount,
       cashAmount,
       outletName: outletName.trim() || undefined,
       billNo: billNo.trim() || undefined,
       notes: notes.trim() || undefined,
-      idempotencyKey: Crypto.randomUUID(),
+      idempotencyKey: idempotencyKeyRef.current,
     });
     setTransactionId(result.transaction.id);
     await fetchCode(result.transaction.id);
@@ -166,7 +205,7 @@ export default function RecordBenefitScreen() {
       }
 
       try {
-        await submitTransaction(Math.round(total));
+        await submitTransaction(roundMoney(total));
       } catch (err) {
         if (!(err instanceof ApiError && err.code === "insufficient_balance")) throw err;
 
@@ -175,7 +214,7 @@ export default function RecordBenefitScreen() {
           setError("This would go over your remaining balance for the month.");
           return;
         }
-        setPendingRemaining(balance.remaining);
+        setPendingRemaining(roundMoney(balance.remaining));
         setShowSplitPrompt(true);
       }
     } catch (err) {
@@ -187,6 +226,12 @@ export default function RecordBenefitScreen() {
         setError("Your balance changed just now - please review the amount and try again.");
       } else if (err instanceof ApiError && err.code === "wallet_not_valid") {
         setError("Your benefit wallet isn't active right now - contact HR if this seems wrong.");
+      } else if (err instanceof ApiError && err.status === 401) {
+        // Session is dead (expired/revoked/employee deactivated), not a
+        // network blip - signing out sends them back to /login instead of
+        // leaving them stuck on a generic "couldn't save" message forever.
+        setError("Your session has ended - signing you out.");
+        await logout();
       } else {
         setError("Couldn't save this right now. Check your connection and try again.");
       }
@@ -217,11 +262,20 @@ export default function RecordBenefitScreen() {
               ) : code ? (
                 <>
                   <Text style={styles.codeLabel}>GIVE THIS CODE TO THE CASHIER</Text>
-                  <Text style={styles.codeValue}>{formatCode(code)}</Text>
+                  <View style={styles.codeRow}>
+                    <Text style={styles.codeValue}>{formatCode(code)}</Text>
+                    <Pressable onPress={onCopyCode} hitSlop={10} style={styles.copyButton}>
+                      {codeCopied ? (
+                        <Check size={18} color={colors.goldText} />
+                      ) : (
+                        <Copy size={18} color={colors.goldText} />
+                      )}
+                    </Pressable>
+                  </View>
                   <Text style={styles.codeSummary}>
                     {split
-                      ? `₹${split.allowance.toLocaleString("en-IN")} allowance + ₹${split.cash.toLocaleString("en-IN")} cash`
-                      : `₹${total.toLocaleString("en-IN")}`}
+                      ? `${formatMoney(split.allowance)} allowance + ${formatMoney(split.cash)} cash`
+                      : formatMoney(total)}
                     {outletName.trim() ? ` · ${outletName.trim()}` : ""}
                   </Text>
                 </>
@@ -265,8 +319,9 @@ export default function RecordBenefitScreen() {
               <TextInput
                 value={amount}
                 onChangeText={(v) => {
-                  setAmount(v.replace(/[^0-9.]/g, ""));
+                  setAmount(cleanAmountInput(v));
                   setSplit(null); // stale once the amount changes
+                  idempotencyKeyRef.current = null; // this is now a different payment
                 }}
                 placeholder="₹0"
                 placeholderTextColor={colors.textMuted}
@@ -303,17 +358,17 @@ export default function RecordBenefitScreen() {
               <Card tone="gold" style={{ gap: spacing.sm }}>
                 <View style={styles.totalCard}>
                   <Text style={styles.totalLabel}>From Allowance</Text>
-                  <Text style={styles.totalValue}>₹{split.allowance.toLocaleString("en-IN")}</Text>
+                  <Text style={styles.totalValue}>{formatMoney(split.allowance)}</Text>
                 </View>
                 <View style={styles.totalCard}>
                   <Text style={styles.totalLabel}>By Cash</Text>
-                  <Text style={styles.totalValue}>₹{split.cash.toLocaleString("en-IN")}</Text>
+                  <Text style={styles.totalValue}>{formatMoney(split.cash)}</Text>
                 </View>
               </Card>
             ) : (
               <Card tone="gold" style={styles.totalCard}>
                 <Text style={styles.totalLabel}>Total</Text>
-                <Text style={styles.totalValue}>₹{total.toLocaleString("en-IN")}</Text>
+                <Text style={styles.totalValue}>{formatMoney(total)}</Text>
               </Card>
             )}
 
@@ -336,6 +391,7 @@ export default function RecordBenefitScreen() {
                     setOutletName(outlet);
                     setOutletPickerOpen(false);
                     setOutletError(false);
+                    idempotencyKeyRef.current = null; // different payment now
                   }}
                   style={styles.dropdownOption}
                 >
@@ -352,10 +408,10 @@ export default function RecordBenefitScreen() {
           amountRows={
             split
               ? [
-                  { label: "From Allowance", value: `₹${split.allowance.toLocaleString("en-IN")}` },
-                  { label: "By Cash", value: `₹${split.cash.toLocaleString("en-IN")}` },
+                  { label: "From Allowance", value: formatMoney(split.allowance) },
+                  { label: "By Cash", value: formatMoney(split.cash) },
                 ]
-              : [{ value: `₹${total.toLocaleString("en-IN")}` }]
+              : [{ value: formatMoney(total) }]
           }
           actions={[
             {
@@ -385,7 +441,7 @@ export default function RecordBenefitScreen() {
               label: "Pay Remaining by Cash",
               onPress: () => {
                 setShowSplitPrompt(false);
-                setSplit({ allowance: pendingRemaining, cash: Math.round(total) - pendingRemaining });
+                setSplit({ allowance: pendingRemaining, cash: roundMoney(roundMoney(total) - pendingRemaining) });
                 setShowConfirmPrompt(true);
               },
             },
@@ -479,6 +535,15 @@ const styles = StyleSheet.create({
   codeCard: { alignItems: "center", paddingVertical: spacing.xxl, gap: spacing.sm },
   codeLabel: { ...t.label, color: colors.textSecondary, textTransform: "uppercase" },
   codeValue: { ...t.heroNumber, color: colors.goldText, letterSpacing: 4 },
+  codeRow: { flexDirection: "row", alignItems: "center", gap: spacing.sm },
+  copyButton: {
+    width: 32,
+    height: 32,
+    borderRadius: radii.pill,
+    backgroundColor: colors.goldSoft,
+    alignItems: "center",
+    justifyContent: "center",
+  },
   codeSummary: { ...t.bodyMedium, color: colors.textPrimary, textAlign: "center", marginTop: spacing.xs },
   codeError: { ...t.body, color: colors.danger, textAlign: "center" },
 });

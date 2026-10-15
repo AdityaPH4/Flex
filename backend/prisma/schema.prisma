@@ -15,7 +15,7 @@ datasource db {
 model Role {
   id              String     @id @default(uuid())
   name            String     @unique // e.g. "Crew", "Shift Lead", "Manager"
-  monthlyAllowance Int       // in paise/rupees (integer, smallest currency unit - see MONEY note below)
+  monthlyAllowance Decimal   @db.Decimal(10, 2) // rupees - up to 2 decimal places (paise)
   employees       Employee[]
 
   createdAt DateTime @default(now())
@@ -60,6 +60,12 @@ model Employee {
   walletValidFrom DateTime?
   walletValidTo   DateTime?
 
+  // Set by the admin (never by the roster import) for someone who is leaving;
+  // empty for everyone else. A date, not a time: they can spend through the
+  // end of that day (IST), only 'day/30' of that month's allowance is usable
+  // (see lib/lastDay.ts), and the wallet stops after it.
+  lastWorkingDay DateTime? @db.Date
+
   active Boolean @default(true)
 
   sessions            Session[]
@@ -102,8 +108,8 @@ model BenefitPeriod {
   year  Int
   month Int // 1-12
 
-  allowance Int // snapshotted from Role.monthlyAllowance at period-creation time
-  used      Int @default(0)
+  allowance Decimal @db.Decimal(10, 2) // snapshotted from Role.monthlyAllowance at period-creation time
+  used      Decimal @db.Decimal(10, 2) @default(0)
 
   transactions BenefitTransaction[]
 
@@ -125,8 +131,8 @@ model BenefitTransaction {
   outlet   Outlet? @relation(fields: [outletId], references: [id])
   outletName String? // fallback free-text if outlet isn't a system record yet
 
-  amount     Int // rupees, integer - the portion actually deducted from the benefit allowance
-  cashAmount Int? // rupees, integer - extra paid in cash when amount alone couldn't cover the bill; never touches balance enforcement
+  amount     Decimal  @db.Decimal(10, 2) // rupees, up to 2 decimal places - the portion actually deducted from the benefit allowance
+  cashAmount Decimal? @db.Decimal(10, 2) // rupees, up to 2 decimal places - extra paid in cash when amount alone couldn't cover the bill; never touches balance enforcement
   items      Json? // [{ name, amount }] - retired in favor of billNo below (see CLAUDE.md), kept nullable so existing rows with real data aren't lost; no longer written to by new transactions
   billNo     String? // the outlet's own bill/receipt number, entered by the employee - replaces the old free-form items list
   occurredAt DateTime @default(now())

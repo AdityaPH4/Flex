@@ -5,6 +5,9 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 <title>TREAT — Admin</title>
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@tabler/icons-webfont@2.47.0/tabler-icons.min.css" />
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=Space+Grotesk:wght@500;700&display=swap" rel="stylesheet" />
 <link rel="stylesheet" href="/admin/styles.css" />
 </head>
 <body>
@@ -23,6 +26,20 @@
     </div>
   </div>
 
+  <!-- ================= DIALOG (replaces the browser's confirm box) ================= -->
+  <div id="dialog" class="dialog-backdrop hidden" role="dialog" aria-modal="true" aria-labelledby="dialog-title">
+    <div class="dialog-card">
+      <div id="dialog-icon" class="dialog-icon"><i class="ti ti-alert-triangle"></i></div>
+      <h2 id="dialog-title"></h2>
+      <p id="dialog-message"></p>
+      <dl id="dialog-facts" class="dialog-facts"></dl>
+      <div class="dialog-actions">
+        <button type="button" id="dialog-cancel" class="secondary-button">Cancel</button>
+        <button type="button" id="dialog-ok" class="primary-button"></button>
+      </div>
+    </div>
+  </div>
+
   <!-- ================= DASHBOARD ================= -->
   <div id="dashboard-screen" class="app-shell hidden">
     <button id="sidebar-toggle" class="sidebar-toggle" aria-label="Toggle menu"><i class="ti ti-menu-2"></i></button>
@@ -34,6 +51,7 @@
       </div>
       <nav class="sidebar-nav">
         <button class="nav-item active" data-page="employees"><i class="ti ti-users"></i>Employees</button>
+        <button class="nav-item" data-page="revoke"><i class="ti ti-wallet-off"></i>Revoke balance</button>
         <button class="nav-item" data-page="import-export"><i class="ti ti-file-import"></i>Import / Export</button>
         <button class="nav-item" data-page="reconcile"><i class="ti ti-refresh"></i>Reconcile</button>
       </nav>
@@ -45,12 +63,18 @@
       <section id="page-employees" class="page">
         <header class="page-header"><h1>Employees</h1></header>
         <div class="panel">
-          <input type="text" id="employees-search" class="search-input" placeholder="Search by employee code" />
+          <div class="search-row">
+            <input type="text" id="employees-search" class="search-input" placeholder="Search by employee code" />
+            <div class="subtab-row search-by" role="group" aria-label="Search by">
+              <button type="button" class="subtab active" data-search-by="code">Employee code</button>
+              <button type="button" class="subtab" data-search-by="name">Name</button>
+            </div>
+          </div>
           <div class="table-wrap">
             <table>
               <thead>
                 <tr>
-                  <th>Name</th><th>Code</th><th>Email</th><th>Phone</th><th>Role</th><th>Outlet</th>
+                  <th>Name</th><th>Code</th><th title="Last working day">LWD</th><th>Email</th><th>Phone</th><th>Role</th><th>Outlet</th>
                   <th>Allowance</th><th>Limit</th><th>OTP</th><th>Valid From</th><th>Valid To</th>
                   <th>Grade</th><th>DOJ</th><th>Used</th><th>Remaining</th>
                 </tr>
@@ -59,6 +83,23 @@
             </table>
           </div>
           <p id="employees-empty" class="empty-state hidden">No active employees yet.</p>
+        </div>
+      </section>
+
+      <section id="page-revoke" class="page hidden">
+        <header class="page-header"><h1>Revoke balance</h1></header>
+        <div class="panel">
+          <p class="hint">For an employee who is leaving. Search by name or employee code, then revoke what is left of this month's balance. The employee needs an LWD (last working day) in the roster upload first.</p>
+          <input type="text" id="revoke-search" class="search-input" placeholder="Search by name or employee code" autocomplete="off" />
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr><th>Name</th><th>Code</th><th title="Last working day">LWD</th><th>Used</th><th>Remaining</th><th></th></tr>
+              </thead>
+              <tbody id="revoke-body"></tbody>
+            </table>
+          </div>
+          <p id="revoke-empty" class="empty-state">Type a name or employee code to find someone.</p>
         </div>
       </section>
 
@@ -76,7 +117,7 @@
 
         <div class="panel">
           <h2 class="panel-title">Import</h2>
-          <p class="hint">Upload the wallet system's own CSV (wallet_no, ref_no, amount, limit, customer_name, phone_number, email_id, enable_otp, valid_from, valid_to, Grade, DOJ, Cost Center) - same file HR already uploads to register wallets. Existing wallet numbers are updated; new ones are created. Every column is required on every row - if anything is missing, the whole file is rejected and nothing is imported until it's fixed.</p>
+          <p class="hint">Upload the wallet system's own CSV (wallet_no, ref_no, amount, limit, customer_name, phone_number, email_id, enable_otp, valid_from, valid_to, Grade, DOJ, Cost Center, LWD) - same file HR already uploads to register wallets, plus an LWD (last working day) column. Existing wallet numbers are updated; new ones are created. Every column except LWD is required on every row - if anything is missing, the whole file is rejected and nothing is imported until it's fixed. Leave LWD empty for anyone who is not leaving; a date there (e.g. 08-Oct-2026) prorates that month's allowance and ends the wallet after that day.</p>
           <div class="reconcile-actions">
             <label class="secondary-button file-button">
               <i class="ti ti-file-upload"></i>Choose CSV
@@ -99,7 +140,7 @@
               <thead><tr>
                 <th>Wallet #</th><th>Name</th><th>Email</th><th>Phone</th><th>Ref No</th>
                 <th>Cost Center</th><th>Amount</th><th>Limit</th><th>OTP</th>
-                <th>Valid From</th><th>Valid To</th><th>Grade</th><th>DOJ</th>
+                <th>Valid From</th><th>Valid To</th><th>Grade</th><th>DOJ</th><th>LWD</th>
                 <th>Status</th><th>Error</th>
               </tr></thead>
               <tbody id="import-body"></tbody>
