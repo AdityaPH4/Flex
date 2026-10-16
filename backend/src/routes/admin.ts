@@ -26,7 +26,7 @@ const lock = { count: 0, lockedUntil: 0 };
 
 // What the login page needs to draw the Google button.
 adminRouter.get("/config", (_req, res) => {
-  res.json({ googleClientId: env.googleClientId });
+  res.json({ googleClientId: env.googleClientId, testTools: env.testTools });
 });
 
 adminRouter.post("/login", async (req, res) => {
@@ -96,6 +96,44 @@ adminRouter.post("/password", async (req, res) => {
 adminRouter.get("/employees", async (_req, res) => {
   const balances = await listCurrentBalancesForActiveEmployees(prisma);
   res.json({ employees: balances });
+});
+
+// TESTING PHASE ONLY (ENABLE_TEST_TOOLS=true): set each listed wallet's
+// remaining balance for this month to exactly new_balance, by moving the
+// month's allowance to used + new_balance. All-or-nothing: an unknown wallet or
+// a bad number rejects the whole file. For someone with an LWD the prorated cap
+// still applies on top. Remove with the env var (and this block) for production.
+const updateBalanceSchema = z.object({
+  rows: z
+    .array(z.object({ wallet: z.string().trim().min(1), new_balance: z.coerce.number().min(0).max(10_000_000) }))
+    .min(1)
+    .max(2000),
+});
+
+adminRouter.post("/test/update-balance", async (req, res) => {
+  if (!env.testTools) return res.status(404).json({ error: "not_found" });
+  const parsed = updateBalanceSchema.safeParse(req.body);
+  if (!parsed.success) {
+    return res.status(400).json({
+      error: "invalid_rows",
+      issues: parsed.error.issues.map((i) => ({ row: Number(i.path[1]) + 2, field: String(i.path[2] ?? ""), message: i.message })),
+    });
+  }
+  const employees = await prisma.employee.findMany({ where: { employeeCode: { in: parsed.data.rows.map((r) => r.wallet) } } });
+  const byCode = new Map(employees.map((e) => [e.employeeCode, e]));
+  const unknown = parsed.data.rows.filter((r) => !byCode.has(r.wallet)).map((r) => r.wallet);
+  if (unknown.length) return res.status(400).json({ error: "unknown_wallets", wallets: unknown });
+
+  const results = [];
+  for (const r of parsed.data.rows) {
+    const e = byCode.get(r.wallet)!;
+    const period = await getOrCreatePeriod(prisma, e.id);
+    const newBalance = roundMoney(r.new_balance);
+    await prisma.benefitPeriod.update({ where: { id: period.id }, data: { allowance: roundMoney(Number(period.used) + newBalance) } });
+    results.push({ wallet: e.employeeCode, name: e.name, used: Number(period.used), newBalance });
+  }
+  console.log(`[admin] test tool: updated balance of ${results.length} wallet(s)`);
+  res.json({ updated: results.length, results });
 });
 
 // Takes back whatever is left of this month's balance for someone who is

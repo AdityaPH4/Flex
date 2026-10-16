@@ -162,7 +162,8 @@ async function onGoogleCredential(response) {
 
 async function initGoogleButton() {
   try {
-    const { googleClientId } = await (await fetch("/api/admin/config")).json();
+    const { googleClientId, testTools } = await (await fetch("/api/admin/config")).json();
+    if (testTools) document.getElementById("nav-update-balance").classList.remove("hidden");
     // The Google script loads async; wait for it.
     for (let i = 0; i < 50 && !window.google?.accounts?.id; i++) await new Promise((r) => setTimeout(r, 100));
     if (!window.google?.accounts?.id) return;
@@ -213,6 +214,57 @@ document.querySelectorAll(".nav-item[data-page]").forEach((btn) => {
 
 document.getElementById("sidebar-toggle").addEventListener("click", () => {
   sidebar.classList.toggle("open");
+});
+
+// ---------------- Update balance (testing only) ----------------
+
+let balanceRows = null;
+const balanceFileInput = document.getElementById("balance-file-input");
+const balanceRunButton = document.getElementById("balance-run-button");
+const balanceError = document.getElementById("balance-error");
+
+function showBalanceError(msg) { balanceError.textContent = msg; balanceError.classList.remove("hidden"); }
+
+balanceFileInput.addEventListener("change", () => {
+  const file = balanceFileInput.files?.[0];
+  balanceError.classList.add("hidden");
+  balanceRunButton.disabled = true;
+  balanceRows = null;
+  if (!file) return;
+  document.getElementById("balance-filename").textContent = file.name;
+  readExcelRows(file).then(
+    (rows) => {
+      // Headers matched case-insensitively: wallet, new_balance
+      const pick = (row, name) => Object.entries(row).find(([k]) => k.toLowerCase().replace(/\s+/g, "_") === name)?.[1] ?? "";
+      balanceRows = rows.map((r) => ({ wallet: pick(r, "wallet"), new_balance: String(pick(r, "new_balance")).replace(/,/g, "") }));
+      if (balanceRows.length === 0) return showBalanceError("No rows found in this file.");
+      const bad = balanceRows.map((r, i) => (r.wallet && r.new_balance !== "" ? null : i + 2)).filter(Boolean);
+      if (bad.length) { balanceRows = null; return showBalanceError(`Both wallet and new_balance are needed. Check row${bad.length === 1 ? "" : "s"}: ${bad.slice(0, 20).join(", ")}`); }
+      balanceRunButton.disabled = false;
+    },
+    () => showBalanceError("Couldn't read that file - make sure it's a valid Excel file (.xlsx).")
+  );
+});
+
+balanceRunButton.addEventListener("click", async () => {
+  if (!balanceRows) return;
+  balanceError.classList.add("hidden");
+  balanceRunButton.disabled = true;
+  try {
+    const data = await api("/test/update-balance", { method: "POST", body: JSON.stringify({ rows: balanceRows }) });
+    document.getElementById("balance-empty").classList.add("hidden");
+    document.getElementById("balance-body").innerHTML = data.results
+      .map((r) => `<tr><td>${escapeHtml(r.wallet)}</td><td>${escapeHtml(r.name)}</td><td>${money(r.used)}</td><td>${money(r.newBalance)}</td></tr>`)
+      .join("");
+    loadEmployees();
+  } catch (err) {
+    const b = err.body;
+    if (b?.error === "unknown_wallets") showBalanceError(`Nothing updated. These wallets don't exist: ${b.wallets.slice(0, 20).join(", ")}`);
+    else if (b?.error === "invalid_rows") showBalanceError("Nothing updated. Check these rows:\n" + b.issues.slice(0, 20).map((i) => `Row ${i.row}: ${i.field} ${i.message}`).join("\n"));
+    else showBalanceError("Update failed - check your connection and try again.");
+  } finally {
+    balanceRunButton.disabled = false;
+  }
 });
 
 // ---------------- Employees ----------------

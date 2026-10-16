@@ -27,6 +27,9 @@ export const env = {
   // The one person allowed into the admin dashboard (verified through Google;
   // she then sets her own password). Empty = nobody can sign in.
   adminEmail: (process.env.ADMIN_EMAIL ?? "").trim().toLowerCase(),
+  // Testing-phase tools in the admin dashboard (the "Update balance" tab).
+  // Leave unset in production: the tab disappears and its endpoint 404s.
+  testTools: process.env.ENABLE_TEST_TOOLS === "true",
   adminSessionTtlHours: Number(process.env.ADMIN_SESSION_TTL_HOURS ?? 12),
 
   // Cashier screen (/cashier): same idea as the admin dashboard - one shared

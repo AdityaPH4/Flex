@@ -64,6 +64,7 @@
         <button class="nav-item" data-page="revoke"><i class="ti ti-wallet-off"></i>Revoke balance</button>
         <button class="nav-item" data-page="import-export"><i class="ti ti-file-import"></i>Import / Export</button>
         <button class="nav-item" data-page="reconcile"><i class="ti ti-refresh"></i>Reconcile</button>
+        <button id="nav-update-balance" class="nav-item hidden" data-page="update-balance"><i class="ti ti-coin"></i>Update balance</button>
       </nav>
       <button id="password-open" class="nav-item"><i class="ti ti-key"></i>Change password</button>
       <button id="logout-button" class="nav-item nav-item-signout"><i class="ti ti-logout"></i>Sign out</button>
@@ -182,6 +183,31 @@
             </table>
           </div>
           <p id="leavers-empty" class="empty-state hidden">Nobody has left so far this month.</p>
+        </div>
+      </section>
+
+      <section id="page-update-balance" class="page hidden">
+        <header class="page-header">
+          <h1>Update balance</h1>
+          <p class="subtitle">Testing only. Upload an Excel file with two columns, <b>wallet</b> and <b>new_balance</b>: each wallet's remaining balance for this month becomes exactly that amount.</p>
+        </header>
+        <div class="panel">
+          <div class="reconcile-actions">
+            <label class="secondary-button file-button">
+              <i class="ti ti-file-upload"></i>Upload Excel
+              <input type="file" id="balance-file-input" accept=".xlsx,.xls" class="visually-hidden" />
+            </label>
+            <span id="balance-filename" class="hint"></span>
+            <button id="balance-run-button" class="primary-button" disabled><i class="ti ti-coin"></i>Update balances</button>
+          </div>
+          <p id="balance-error" class="error hidden" style="white-space: pre-line"></p>
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th>Wallet #</th><th>Name</th><th>Used</th><th>New balance</th></tr></thead>
+              <tbody id="balance-body"></tbody>
+            </table>
+          </div>
+          <p id="balance-empty" class="empty-state">Upload an Excel file to get started.</p>
         </div>
       </section>
 

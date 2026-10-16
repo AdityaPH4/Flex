@@ -102,6 +102,14 @@ and things to be careful not to break.
    they get real documentation from Digitory, update the candidate lists
    rather than assuming the column names are fixed.
 
+## Testing-only tool (remove before real production use)
+
+- Admin "Update balance" tab + `POST /api/admin/test/update-balance`: upload an
+  Excel with `wallet`, `new_balance` and each wallet's remaining balance for
+  this month is set to that amount. Only exists while `ENABLE_TEST_TOOLS=true`
+  in the server `.env` (otherwise the tab is hidden and the endpoint 404s).
+  Production = leave the variable unset.
+
 ## Do not touch without being asked
 
 - Don't merge this project into a workspace with the person's other,
