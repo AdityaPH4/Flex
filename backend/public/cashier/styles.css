@@ -535,3 +535,5 @@ body.on-main { min-height: 0; overflow: hidden; }
 @media (prefers-reduced-motion: reduce) {
   .alert, .status .dot { animation: none !important; }
 }
+
+#outlet-button:disabled { opacity: 1; cursor: default; }

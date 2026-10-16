@@ -81,6 +81,7 @@
   const state = {
     token: store.get(KEYS.token),
     outlet: store.get(KEYS.outlet), // null until picked, else a name or ALL
+    singleOutlet: false, // the server offers exactly one outlet: no picker, no "Change"
     soundOn: store.get(KEYS.sound) !== "0",
     tab: "live", // "live" | "all"
 
@@ -668,7 +669,8 @@
 
   function enterMain() {
     show("main");
-    $("outlet-button").textContent = outletLabel() + " · Change";
+    $("outlet-button").textContent = outletLabel() + (state.singleOutlet ? "" : " · Change");
+    $("outlet-button").disabled = state.singleOutlet; // one outlet: just a label
     renderSoundButton();
     setStatus("live");
     keepAwake();
@@ -688,6 +690,21 @@
     button.type = "button";
     button.addEventListener("click", () => chooseOutlet(value));
     return button;
+  }
+
+  // Entry point after sign-in / page load. With exactly one outlet there is
+  // nothing to pick: use it (also replacing a saved "All outlets" or an outlet
+  // that is no longer offered). Otherwise a saved choice skips the picker.
+  async function begin() {
+    try {
+      const { outlets } = await api("/outlets");
+      state.singleOutlet = outlets.length === 1;
+      if (state.singleOutlet) return chooseOutlet(outlets[0]);
+    } catch (err) {
+      if (err.status === 401) return signOut("Your session ended. Please sign in again.");
+    }
+    if (state.outlet) enterMain();
+    else openOutletPicker();
   }
 
   async function openOutletPicker() {
@@ -757,8 +774,7 @@
       state.token = data.token;
       store.set(KEYS.token, data.token);
       $("login-password").value = "";
-      if (state.outlet) enterMain();
-      else openOutletPicker();
+      begin();
     } catch (err) {
       error.textContent = loginErrorText(err);
       error.classList.remove("hidden");
@@ -836,8 +852,7 @@
   // ---------- start ----------
 
   if (state.token) {
-    if (state.outlet) enterMain();
-    else openOutletPicker();
+    begin();
   } else {
     show("login");
   }
