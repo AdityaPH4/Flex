@@ -126,6 +126,16 @@ function showSignInForm() {
   for (const el of [loginForm, document.querySelector(".or"), document.getElementById("google-button")]) el.classList.remove("hidden");
 }
 
+// "Forgot your password?" was clicked: the Google sign-in that follows goes
+// straight to choosing a new password instead of into the dashboard.
+let resetMode = false;
+document.getElementById("forgot-link").addEventListener("click", (e) => {
+  e.preventDefault();
+  resetMode = true;
+  loginError.textContent = "Sign in with Google below to choose a new password.";
+  loginError.classList.remove("hidden");
+});
+
 async function onGoogleCredential(response) {
   loginError.classList.add("hidden");
   try {
@@ -141,8 +151,9 @@ async function onGoogleCredential(response) {
       return;
     }
     setToken(body.token);
-    if (body.passwordSet) showDashboard();
+    if (body.passwordSet && !resetMode) showDashboard();
     else showPasswordForm(false);
+    resetMode = false;
   } catch {
     loginError.textContent = "Couldn't reach the server. Check your connection.";
     loginError.classList.remove("hidden");
