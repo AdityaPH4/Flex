@@ -397,15 +397,27 @@ revokeSearch.addEventListener("input", renderRevoke);
 
 document.getElementById("export-button").addEventListener("click", async () => {
   const data = await api("/employees/export");
-  const csv = Papa.unparse(data.employees);
-  const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement("a");
-  a.href = url;
-  a.download = `toit-employees-${new Date().toISOString().slice(0, 10)}.csv`;
-  a.click();
-  URL.revokeObjectURL(url);
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(data.employees), "Employees");
+  XLSX.writeFile(wb, `toit-employees-${new Date().toISOString().slice(0, 10)}.xlsx`);
 });
+
+// One Excel cell as the text the import expects: dates as 08-Oct-2026, numbers
+// without a trailing .0, everything trimmed. (The server wants strings.)
+const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+function cellToText(v) {
+  if (v instanceof Date) return `${String(v.getDate()).padStart(2, "0")}-${MONTHS[v.getMonth()]}-${v.getFullYear()}`;
+  return v == null ? "" : String(v).trim();
+}
+
+// First sheet of the workbook -> one object per row, keyed by the header row.
+async function readExcelRows(file) {
+  const wb = XLSX.read(await file.arrayBuffer(), { type: "array", cellDates: true });
+  const ws = wb.Sheets[wb.SheetNames[0]];
+  return XLSX.utils.sheet_to_json(ws, { defval: "", raw: true, blankrows: false }).map((row) =>
+    Object.fromEntries(Object.entries(row).map(([k, v]) => [k.trim(), cellToText(v)]))
+  );
+}
 
 let importRows = null;
 
@@ -423,11 +435,9 @@ importFileInput.addEventListener("change", () => {
 
   importFilenameLabel.textContent = file.name;
 
-  Papa.parse(file, {
-    header: true,
-    skipEmptyLines: true,
-    complete: (result) => {
-      importRows = result.data;
+  readExcelRows(file).then(
+    (rows) => {
+      importRows = rows;
       if (importRows.length === 0) {
         importError.textContent = "No rows found in this file.";
         importError.classList.remove("hidden");
@@ -435,11 +445,11 @@ importFileInput.addEventListener("change", () => {
       }
       importRunButton.disabled = false;
     },
-    error: () => {
-      importError.textContent = "Couldn't read that file - make sure it's a valid CSV.";
+    () => {
+      importError.textContent = "Couldn't read that file - make sure it's a valid Excel file (.xlsx).";
       importError.classList.remove("hidden");
-    },
-  });
+    }
+  );
 });
 
 importRunButton.addEventListener("click", async () => {

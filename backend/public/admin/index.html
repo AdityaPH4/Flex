@@ -122,17 +122,17 @@
 
         <div class="panel">
           <h2 class="panel-title">Export</h2>
-          <p class="hint">Downloads every active employee with this month's allowance - the template to edit and re-import.</p>
+          <p class="hint">Downloads every active employee with this month's allowance as an Excel file - the template to edit and re-upload.</p>
           <button id="export-button" class="secondary-button"><i class="ti ti-file-download"></i>Export employees</button>
         </div>
 
         <div class="panel">
           <h2 class="panel-title">Import</h2>
-          <p class="hint">Upload the wallet system's own CSV (wallet_no, ref_no, amount, limit, customer_name, phone_number, email_id, enable_otp, valid_from, valid_to, Grade, DOJ, Cost Center, LWD) - same file HR already uploads to register wallets, plus an LWD (last working day) column. Existing wallet numbers are updated; new ones are created. Every column except LWD is required on every row - if anything is missing, the whole file is rejected and nothing is imported until it's fixed. Leave LWD empty for anyone who is not leaving; a date there (e.g. 08-Oct-2026) prorates that month's allowance and ends the wallet after that day.</p>
+          <p class="hint">Upload the wallet system's own Excel file (wallet_no, ref_no, amount, limit, customer_name, phone_number, email_id, enable_otp, valid_from, valid_to, Grade, DOJ, Cost Center, LWD) - same file HR already uploads to register wallets, plus an LWD (last working day) column. Existing wallet numbers are updated; new ones are created. Every column except LWD is required on every row - if anything is missing, the whole file is rejected and nothing is imported until it's fixed. Leave LWD empty for anyone who is not leaving; a date there (e.g. 08-Oct-2026) prorates that month's allowance and ends the wallet after that day.</p>
           <div class="reconcile-actions">
             <label class="secondary-button file-button">
-              <i class="ti ti-file-upload"></i>Choose CSV
-              <input type="file" id="import-file-input" accept=".csv" class="visually-hidden" />
+              <i class="ti ti-file-upload"></i>Upload Excel
+              <input type="file" id="import-file-input" accept=".xlsx,.xls" class="visually-hidden" />
             </label>
             <span id="import-filename" class="hint"></span>
             <button id="import-run-button" class="primary-button" disabled><i class="ti ti-upload"></i>Run Import</button>
@@ -157,7 +157,7 @@
               <tbody id="import-body"></tbody>
             </table>
           </div>
-          <p id="import-empty" class="empty-state">Import a CSV to get started.</p>
+          <p id="import-empty" class="empty-state">Upload an Excel file to get started.</p>
         </div>
 
         <div class="panel">
@@ -230,6 +230,7 @@
   </div>
 
   <script src="https://cdn.jsdelivr.net/npm/papaparse@5.4.1/papaparse.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
   <script src="https://accounts.google.com/gsi/client" async defer></script>
   <script src="/admin/app.js"></script>
 </body>
