@@ -307,6 +307,20 @@ const importSchema = z.object({
   rows: z.array(z.record(z.string(), z.unknown())).min(1).max(2000),
 });
 
+// Why one import row could not be saved, in words the admin can act on. The
+// usual cause is the unique email: two wallets in the file (or a wallet already
+// in the system) cannot share one email, since the email is the Google login.
+async function describeSaveError(err: unknown, email: string, walletNo: string): Promise<string> {
+  const e = err as { code?: string; meta?: { target?: unknown } };
+  if (e?.code === "P2002" && JSON.stringify(e.meta?.target ?? "").toLowerCase().includes("email")) {
+    const owner = await prisma.employee.findUnique({ where: { email: email.toLowerCase() } });
+    return owner && owner.employeeCode !== walletNo
+      ? `Email ${email} already belongs to wallet ${owner.employeeCode} (${owner.name}) - every wallet needs its own email.`
+      : `Email ${email} is already used by another wallet - every wallet needs its own email.`;
+  }
+  return `Could not save this row (${err instanceof Error ? err.message.split("\n").filter(Boolean).pop() : "unknown error"}).`;
+}
+
 // Monthly bulk import, matching the wallet system's own "Register
 // Master-Wallet" upload format exactly (see schema.prisma's wallet_* fields
 // for the full mapping). Creates or updates employees by wallet_no
@@ -468,7 +482,9 @@ adminRouter.post("/employees/import", async (req, res) => {
         LWD: data.LWD || null,
         status: existing ? "updated" : "created",
       });
-    } catch {
+    } catch (err) {
+      const reason = await describeSaveError(err, data.email_id, data.wallet_no);
+      console.error(`[admin] import: row ${data.wallet_no} not saved: ${reason}`);
       results.push({
         wallet_no: data.wallet_no,
         ref_no: data.ref_no,
@@ -485,7 +501,7 @@ adminRouter.post("/employees/import", async (req, res) => {
         "Cost Center": costCenter || null,
         LWD: data.LWD || null,
         status: "error",
-        error: "Could not save this row.",
+        error: reason,
       });
     }
   }
