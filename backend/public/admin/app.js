@@ -46,6 +46,7 @@ const loginScreen = document.getElementById("login-screen");
 const dashboardScreen = document.getElementById("dashboard-screen");
 
 function showLogin() {
+  if (typeof showSignInForm === "function") showSignInForm();
   loginScreen.classList.remove("hidden");
   dashboardScreen.classList.add("hidden");
 }
@@ -77,9 +78,11 @@ loginForm.addEventListener("submit", async (e) => {
     });
     const body = await res.json();
     if (!res.ok) {
-      if (res.status === 429) {
+      if (body.error === "password_not_set") {
+        loginError.textContent = "No password yet. Use \"Sign in with Google\" below to set one.";
+      } else if (res.status === 429) {
         const hours = Math.max(1, Math.ceil((body.retryAfterSeconds || 28800) / 3600));
-        loginError.textContent = `Too many wrong attempts. Try again in about ${hours} hour${hours === 1 ? "" : "s"}.`;
+        loginError.textContent = `Too many wrong attempts. Try again in about ${hours} hour${hours === 1 ? "" : "s"}, or sign in with Google.`;
       } else if (body.attemptsLeft === 0) {
         loginError.textContent = "Incorrect password. Too many attempts: sign-in is locked for 8 hours.";
       } else {
@@ -98,6 +101,85 @@ loginForm.addEventListener("submit", async (e) => {
     loginButton.textContent = "Sign in";
   }
 });
+
+// ---------------- Google sign-in (the admin's own email only) + her password ----------------
+
+const passwordForm = document.getElementById("password-form");
+const passwordError = document.getElementById("password-error");
+const passwordCancel = document.getElementById("password-cancel");
+
+// Swaps the login card between "sign in" and "choose a password".
+function showPasswordForm(cancellable) {
+  loginScreen.classList.remove("hidden");
+  dashboardScreen.classList.add("hidden");
+  for (const el of [loginForm, document.querySelector(".or"), document.getElementById("google-button")]) el.classList.add("hidden");
+  document.getElementById("login-subtitle").classList.add("hidden");
+  passwordForm.classList.remove("hidden");
+  passwordCancel.classList.toggle("hidden", !cancellable);
+  passwordForm.reset();
+  passwordError.classList.add("hidden");
+}
+
+function showSignInForm() {
+  passwordForm.classList.add("hidden");
+  document.getElementById("login-subtitle").classList.remove("hidden");
+  for (const el of [loginForm, document.querySelector(".or"), document.getElementById("google-button")]) el.classList.remove("hidden");
+}
+
+async function onGoogleCredential(response) {
+  loginError.classList.add("hidden");
+  try {
+    const res = await fetch("/api/admin/google", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ idToken: response.credential }),
+    });
+    const body = await res.json();
+    if (!res.ok) {
+      loginError.textContent = res.status === 403 ? "This Google account is not allowed to use the admin dashboard." : "Google sign-in failed. Try again.";
+      loginError.classList.remove("hidden");
+      return;
+    }
+    setToken(body.token);
+    if (body.passwordSet) showDashboard();
+    else showPasswordForm(false);
+  } catch {
+    loginError.textContent = "Couldn't reach the server. Check your connection.";
+    loginError.classList.remove("hidden");
+  }
+}
+
+async function initGoogleButton() {
+  try {
+    const { googleClientId } = await (await fetch("/api/admin/config")).json();
+    // The Google script loads async; wait for it.
+    for (let i = 0; i < 50 && !window.google?.accounts?.id; i++) await new Promise((r) => setTimeout(r, 100));
+    if (!window.google?.accounts?.id) return;
+    google.accounts.id.initialize({ client_id: googleClientId, callback: onGoogleCredential });
+    google.accounts.id.renderButton(document.getElementById("google-button"), { theme: "outline", size: "large", text: "signin_with", width: 336 });
+  } catch {
+    // no Google button: password sign-in still works
+  }
+}
+initGoogleButton();
+
+passwordForm.addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const pw = document.getElementById("new-password").value;
+  const show = (msg) => { passwordError.textContent = msg; passwordError.classList.remove("hidden"); };
+  if (pw.length < 10) return show("Use at least 10 characters.");
+  if (pw !== document.getElementById("new-password2").value) return show("The two passwords don't match.");
+  try {
+    await api("/password", { method: "POST", body: JSON.stringify({ password: pw }) });
+    showSignInForm();
+    showDashboard();
+  } catch {
+    show("Couldn't save the password. Try again.");
+  }
+});
+
+passwordCancel.addEventListener("click", () => { showSignInForm(); showDashboard(); });
+document.getElementById("password-open").addEventListener("click", () => showPasswordForm(true));
 
 document.getElementById("logout-button").addEventListener("click", () => {
   clearToken();

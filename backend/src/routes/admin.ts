@@ -1,9 +1,10 @@
 import { Router } from "express";
-import crypto from "crypto";
 import { z } from "zod";
 import { prisma } from "../db";
 import { env } from "../env";
 import { signAdminToken } from "../lib/jwt";
+import { verifyGoogleIdToken } from "../lib/googleAuth";
+import { hashPassword, verifyPassword } from "../lib/adminPassword";
 import { requireAdmin } from "../middleware/adminAuth";
 import { getOrCreatePeriod, listCurrentBalancesForActiveEmployees } from "../lib/period";
 import { effectiveAllowance } from "../lib/lastDay";
@@ -11,48 +12,85 @@ import { roundMoney } from "../lib/money";
 
 export const adminRouter = Router();
 
-function constantTimeEquals(a: string, b: string): boolean {
-  const bufA = Buffer.from(a);
-  const bufB = Buffer.from(b);
-  if (bufA.length !== bufB.length) return false;
-  return crypto.timingSafeEqual(bufA, bufB);
-}
+const loginSchema = z.object({ password: z.string().min(1).max(200) });
+const googleSchema = z.object({ idToken: z.string().min(1) });
+const passwordSchema = z.object({ password: z.string().min(10).max(200) });
 
-const loginSchema = z.object({ password: z.string().min(1) });
-
-// Login throttle: 5 wrong passwords from one address and that address is locked
-// out for 8 hours. In memory (a server restart clears it) and keyed on req.ip,
-// which is the real client address behind Caddy (see "trust proxy" in server.ts).
+// Login throttle: there is exactly one admin account, so the count is for the
+// account, not per address - 5 wrong passwords from anyone and password
+// sign-in is locked for 8 hours. Google sign-in (her email only) is the way
+// back in and lifts the lock. In memory: a server restart clears it.
 const MAX_FAILED_LOGINS = 5;
 const LOCKOUT_MS = 8 * 60 * 60 * 1000;
-const failedLogins = new Map<string, { count: number; lockedUntil: number }>();
+const lock = { count: 0, lockedUntil: 0 };
 
-adminRouter.post("/login", (req, res) => {
+// What the login page needs to draw the Google button.
+adminRouter.get("/config", (_req, res) => {
+  res.json({ googleClientId: env.googleClientId });
+});
+
+adminRouter.post("/login", async (req, res) => {
   const parsed = loginSchema.safeParse(req.body);
   if (!parsed.success) {
     return res.status(400).json({ error: "invalid_body" });
   }
   const now = Date.now();
-  const key = req.ip ?? "unknown";
-  const entry = failedLogins.get(key);
-  if (entry && entry.lockedUntil > now) {
+  if (lock.lockedUntil > now) {
     return res.status(429).json({
       error: "too_many_attempts",
-      retryAfterSeconds: Math.ceil((entry.lockedUntil - now) / 1000),
+      retryAfterSeconds: Math.ceil((lock.lockedUntil - now) / 1000),
     });
   }
-  if (!env.adminPassword || !constantTimeEquals(parsed.data.password, env.adminPassword)) {
+  const cred = env.adminEmail
+    ? await prisma.adminCredential.findUnique({ where: { email: env.adminEmail } })
+    : null;
+  if (!cred) return res.status(409).json({ error: "password_not_set" });
+  if (!verifyPassword(parsed.data.password, cred.passwordHash)) {
     // A lock that has run out starts a fresh count.
-    const count = (entry && entry.lockedUntil === 0 ? entry.count : 0) + 1;
-    failedLogins.set(key, { count: count >= MAX_FAILED_LOGINS ? 0 : count, lockedUntil: count >= MAX_FAILED_LOGINS ? now + LOCKOUT_MS : 0 });
+    const count = (lock.lockedUntil === 0 ? lock.count : 0) + 1;
+    lock.count = count >= MAX_FAILED_LOGINS ? 0 : count;
+    lock.lockedUntil = count >= MAX_FAILED_LOGINS ? now + LOCKOUT_MS : 0;
     return res.status(401).json({ error: "invalid_password", attemptsLeft: Math.max(0, MAX_FAILED_LOGINS - count) });
   }
-  failedLogins.delete(key);
-  const token = signAdminToken();
-  res.json({ token, expiresInHours: env.adminSessionTtlHours });
+  lock.count = 0;
+  lock.lockedUntil = 0;
+  res.json({ token: signAdminToken(), expiresInHours: env.adminSessionTtlHours });
+});
+
+// First sign-in, or a forgotten password: Google proves the person owns the
+// admin email. Anyone else's Google account is refused.
+adminRouter.post("/google", async (req, res) => {
+  const parsed = googleSchema.safeParse(req.body);
+  if (!parsed.success) return res.status(400).json({ error: "invalid_body" });
+  let email: string;
+  try {
+    ({ email } = await verifyGoogleIdToken(parsed.data.idToken));
+  } catch {
+    return res.status(401).json({ error: "invalid_google_token" });
+  }
+  if (!env.adminEmail || email !== env.adminEmail) {
+    return res.status(403).json({ error: "not_an_admin" });
+  }
+  lock.count = 0;
+  lock.lockedUntil = 0;
+  const cred = await prisma.adminCredential.findUnique({ where: { email } });
+  res.json({ token: signAdminToken(), expiresInHours: env.adminSessionTtlHours, passwordSet: !!cred });
 });
 
 adminRouter.use(requireAdmin);
+
+// Sets (or changes) her own password.
+adminRouter.post("/password", async (req, res) => {
+  const parsed = passwordSchema.safeParse(req.body);
+  if (!parsed.success) return res.status(400).json({ error: "password_too_short", minLength: 10 });
+  const passwordHash = hashPassword(parsed.data.password);
+  await prisma.adminCredential.upsert({
+    where: { email: env.adminEmail },
+    create: { email: env.adminEmail, passwordHash },
+    update: { passwordHash },
+  });
+  res.json({ ok: true });
+});
 
 // One row per active employee with their current balance - the main table.
 adminRouter.get("/employees", async (_req, res) => {

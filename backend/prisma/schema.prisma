@@ -207,3 +207,11 @@ model IdempotencyKey {
   responseJson String
   createdAt  DateTime @default(now())
 }
+
+// The one admin's own password (hash only). The row is created when she first
+// signs in with Google (ADMIN_EMAIL) and sets a password.
+model AdminCredential {
+  email        String   @id
+  passwordHash String
+  updatedAt    DateTime @updatedAt
+}

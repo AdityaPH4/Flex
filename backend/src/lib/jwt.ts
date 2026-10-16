@@ -24,23 +24,24 @@ export function verifySessionToken(token: string): SessionTokenPayload {
 // Deliberately a separate token shape from employee sessions (different
 // payload, different claim name) so an employee's session token can never
 // be replayed against admin routes even if someone tried. Short-lived
-// relative to employee sessions since it's a shared password for now (see
-// ADMIN_PASSWORD in .env) - the shorter TTL limits how long a leaked token
+// relative to employee sessions - the shorter TTL limits how long a leaked token
 // stays useful.
 
 export interface AdminTokenPayload {
   isAdmin: true;
+  email: string;
 }
 
 export function signAdminToken(): string {
-  return jwt.sign({ isAdmin: true } satisfies AdminTokenPayload, env.jwtSecret, {
+  return jwt.sign({ isAdmin: true, email: env.adminEmail } satisfies AdminTokenPayload, env.jwtSecret, {
     expiresIn: `${env.adminSessionTtlHours}h`,
   });
 }
 
 export function verifyAdminToken(token: string): AdminTokenPayload {
   const payload = jwt.verify(token, env.jwtSecret) as AdminTokenPayload;
-  if (payload.isAdmin !== true) throw new Error("not an admin token");
+  // email check: tokens from the old shared-password days carry none and die here
+  if (payload.isAdmin !== true || !env.adminEmail || payload.email !== env.adminEmail) throw new Error("not an admin token");
   return payload;
 }
 

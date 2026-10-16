@@ -24,7 +24,9 @@ export const env = {
   // for people who haven't set it up yet; the login route itself rejects
   // all attempts if it's unset, so the dashboard just stays inaccessible
   // rather than the whole server refusing to start).
-  adminPassword: process.env.ADMIN_PASSWORD ?? "",
+  // The one person allowed into the admin dashboard (verified through Google;
+  // she then sets her own password). Empty = nobody can sign in.
+  adminEmail: (process.env.ADMIN_EMAIL ?? "").trim().toLowerCase(),
   adminSessionTtlHours: Number(process.env.ADMIN_SESSION_TTL_HOURS ?? 12),
 
   // Cashier screen (/cashier): same idea as the admin dashboard - one shared

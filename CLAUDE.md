@@ -79,9 +79,13 @@ and things to be careful not to break.
    balance" (admin, only for someone with a last working day set) lowers the
    month's allowance to what was used.
 
-4. **The admin dashboard uses one shared password**, not per-admin accounts
-   (`ADMIN_PASSWORD` env var). Known, accepted MVP tradeoff for a 1-2-admin
-   pilot - flagged in the README, not an oversight.
+4. **The admin dashboard is for ONE person only: the `ADMIN_EMAIL` env var
+   (Pallavi, pallavi@ph4.in).** Google Sign-In (that email only) lets her in
+   and lets her set her own password (`AdminCredential` table, scrypt hash);
+   afterwards she signs in with the password, 5 wrong tries lock password
+   sign-in for 8 hours account-wide (Google sign-in lifts it). Admin tokens
+   carry the email; the old shared `ADMIN_PASSWORD` no longer exists. Not
+   per-admin accounts - accepted for the pilot.
 
 5. **Employee session tokens last 30 days.** Deliberately long - reasoning
    discussed with the person was that a stolen token's blast radius is low

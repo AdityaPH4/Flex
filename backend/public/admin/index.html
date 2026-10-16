@@ -17,11 +17,21 @@
     <div class="login-card">
       <p class="eyebrow">TREAT</p>
       <h1>Admin Dashboard</h1>
-      <p class="subtitle">Enter the admin password to continue.</p>
+      <p id="login-subtitle" class="subtitle">Enter your admin password to continue.</p>
       <form id="login-form">
         <input type="password" id="login-password" placeholder="Password" autofocus autocomplete="current-password" />
         <button type="submit" id="login-button">Sign in</button>
         <p id="login-error" class="error hidden"></p>
+      </form>
+      <p class="or">or, first time / forgot password</p>
+      <div id="google-button" class="google-button"></div>
+      <form id="password-form" class="hidden">
+        <p class="subtitle">Choose your password (at least 10 characters).</p>
+        <input type="password" id="new-password" placeholder="New password" autocomplete="new-password" />
+        <input type="password" id="new-password2" placeholder="Repeat new password" autocomplete="new-password" />
+        <button type="submit" id="password-button">Save password</button>
+        <button type="button" id="password-cancel" class="link-button hidden">Cancel</button>
+        <p id="password-error" class="error hidden"></p>
       </form>
     </div>
   </div>
@@ -55,6 +65,7 @@
         <button class="nav-item" data-page="import-export"><i class="ti ti-file-import"></i>Import / Export</button>
         <button class="nav-item" data-page="reconcile"><i class="ti ti-refresh"></i>Reconcile</button>
       </nav>
+      <button id="password-open" class="nav-item"><i class="ti ti-key"></i>Change password</button>
       <button id="logout-button" class="nav-item nav-item-signout"><i class="ti ti-logout"></i>Sign out</button>
     </aside>
 
@@ -219,6 +230,7 @@
   </div>
 
   <script src="https://cdn.jsdelivr.net/npm/papaparse@5.4.1/papaparse.min.js"></script>
+  <script src="https://accounts.google.com/gsi/client" async defer></script>
   <script src="/admin/app.js"></script>
 </body>
 </html>

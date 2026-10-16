@@ -266,10 +266,10 @@ needing EAS at all.
 - **No push notifications or analytics** - deliberately out of scope per
   the V1 spec. (There is now a basic admin dashboard - see below - but it's
   view-only: no employee/role management UI yet, still Prisma Studio for that.)
-- **Admin dashboard auth is a single shared password**, not per-admin
-  accounts (see `ADMIN_PASSWORD` in `.env`). Fine for one or two admins on a
-  pilot; move to real accounts if more people need access or you want an
-  audit trail of who looked at what.
+- **Admin dashboard is for ONE person**, the email in `ADMIN_EMAIL`
+  (`.env`). She proves it is her with Google Sign-In once, sets her own
+  password, and after that signs in with it. Not per-admin accounts: move to
+  real accounts if more people need access or you want an audit trail.
 
 ## Admin dashboard
 
@@ -283,8 +283,11 @@ backend, no extra deploy or app install needed.
 backend, or `http://<your-LAN-IP>:4000/admin` from another device on the
 same network - same reachability rules as the mobile app's `EXPO_PUBLIC_API_URL`.)
 
-**Login:** whatever you set `ADMIN_PASSWORD` to in `backend/.env`. Sessions
-last `ADMIN_SESSION_TTL_HOURS` (default 12) before needing to sign in again.
+**Login:** only the person whose email is `ADMIN_EMAIL` in `backend/.env`.
+First time (or a forgotten password): "Sign in with Google" with that account,
+then choose a password (10+ characters). After that: the password. 5 wrong
+passwords lock password sign-in for 8 hours; Google sign-in lifts the lock.
+"Change password" is in the sidebar. Sessions last `ADMIN_SESSION_TTL_HOURS` (default 12) before needing to sign in again.
 
 **What it shows:**
 - Overview cards: active employee count, and total allowance/used/remaining
