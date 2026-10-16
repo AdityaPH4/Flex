@@ -129,7 +129,7 @@
 
         <div class="panel">
           <h2 class="panel-title">Import</h2>
-          <p class="hint">Upload the wallet system's own Excel file (wallet_no, ref_no, amount, limit, customer_name, phone_number, email_id, enable_otp, valid_from, valid_to, Grade, DOJ, Cost Center, LWD) - same file HR already uploads to register wallets, plus an LWD (last working day) column. Existing wallet numbers are updated; new ones are created. Every column except LWD is required on every row - if anything is missing, the whole file is rejected and nothing is imported until it's fixed. Leave LWD empty for anyone who is not leaving; a date there (e.g. 08-Oct-2026) prorates that month's allowance and ends the wallet after that day.</p>
+          <p class="hint">Upload the wallet system's own Excel file (wallet_no, ref_no, amount, limit, customer_name, phone_number, email_id, enable_otp, valid_from, valid_to, Grade, DOJ, Cost Center, LWD) - same file HR already uploads to register wallets, plus an LWD (last working day) column. Existing wallet numbers are updated; new ones are created. Every column except LWD and phone_number is required on every row - if anything is missing, the whole file is rejected and nothing is imported until it's fixed. Leave LWD empty for anyone who is not leaving; a date there (e.g. 08-Oct-2026) prorates that month's allowance and ends the wallet after that day.</p>
           <div class="reconcile-actions">
             <label class="secondary-button file-button">
               <i class="ti ti-file-upload"></i>Upload Excel

@@ -273,7 +273,9 @@ const importRowSchema = z.object({
   email_id: z.string().trim().email(),
   ref_no: z.string().trim().min(1),
   amount: z.coerce.number().positive().multipleOf(0.01),
-  phone_number: z.string().trim().min(1),
+  // Optional (HR contact info only, never used to log in): column absent = leave
+  // what is stored alone; present = the file wins, an empty cell clears it.
+  phone_number: z.string().trim().optional(),
   "Cost Center": z.string().trim().min(1),
   // Not z.coerce.number() alone - an empty cell would coerce to Number("") = 0,
   // which passes .nonnegative() silently instead of being caught as missing.
@@ -417,7 +419,7 @@ adminRouter.post("/employees/import", async (req, res) => {
       const employeeFields = {
         name: data.customer_name,
         email: data.email_id.toLowerCase(),
-        phone: data.phone_number || null,
+        ...(data.phone_number !== undefined ? { phone: data.phone_number || null } : {}),
         designation: data.ref_no,
         roleId: role.id,
         homeOutletId: outletId,
