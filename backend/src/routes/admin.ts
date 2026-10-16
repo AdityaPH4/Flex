@@ -286,7 +286,9 @@ const importRowSchema = z.object({
     (val) => (val === "" || val === null || val === undefined ? undefined : val),
     z.coerce.number().int().nonnegative()
   ),
-  enable_otp: z.string().trim().min(1),
+  // Optional: empty = off (Digitory's wallet OTP flag, nothing to do with login);
+  // column absent = leave what is stored alone.
+  enable_otp: z.string().trim().optional(),
   valid_from: z.string().trim().min(1),
   valid_to: z.string().trim().min(1),
   Grade: z.string().trim().min(1),
@@ -424,7 +426,7 @@ adminRouter.post("/employees/import", async (req, res) => {
         roleId: role.id,
         homeOutletId: outletId,
         walletLimit: data.limit ?? null,
-        otpEnabled: parseFlexibleBoolean(data.enable_otp),
+        ...(data.enable_otp !== undefined ? { otpEnabled: parseFlexibleBoolean(data.enable_otp) } : {}),
         grade: data.Grade || null,
         dateOfJoining: parseFlexibleDate(data.DOJ),
         walletValidFrom: parseFlexibleDate(data.valid_from),

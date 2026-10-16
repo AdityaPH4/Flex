@@ -193,7 +193,7 @@ and things to be careful not to break.
   in git history, not live - don't revive them as the primary mechanism
   without asking.
 - **Import is all-or-nothing - every column is required on every row, except
-  the optional `LWD` and `phone_number`.** An explicit decision (superseding an earlier one where only
+  the optional `LWD`, `phone_number` and `enable_otp`.** An explicit decision (superseding an earlier one where only
   `email_id` was required and other columns were optional/nullable). The
   whole file is validated upfront in `POST /employees/import`
   (`backend/src/routes/admin.ts`) before any database write happens - if
