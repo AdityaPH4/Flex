@@ -131,8 +131,17 @@ cashierRouter.get("/payments", requireCashier, async (req, res) => {
   const from = since && new Date(since) > windowStart ? new Date(since) : windowStart;
   const outletFilter = outlet ? { outletName: outlet } : {};
 
+  // A bill is "touched" by a new payment or by a rejection (so every cashier
+  // screen sees a rejected payer disappear, not just the one that tapped it).
   const touched = await prisma.benefitTransaction.findMany({
-    where: { status: "confirmed", createdAt: { gt: from }, billNo: { not: null }, ...outletFilter },
+    where: {
+      billNo: { not: null },
+      ...outletFilter,
+      OR: [
+        { status: "confirmed", createdAt: { gt: from } },
+        { status: "void", voidedAt: { gt: from } },
+      ],
+    },
     select: { outletName: true, billNo: true },
     distinct: ["outletName", "billNo"],
     orderBy: { createdAt: "desc" },
@@ -193,12 +202,46 @@ cashierRouter.get("/payments", requireCashier, async (req, res) => {
     })
     .sort((a, b) => b.lastAt.localeCompare(a.lastAt));
 
+  // Touched bills with no confirmed payment left (every payer rejected): the
+  // screen must drop them, they are not in `payments` any more.
+  const gone = touched
+    .map((b) => `${b.outletName ?? ""}|${b.billNo}`)
+    .filter((id) => !bills.has(id));
+
   res.set("Cache-Control", "no-store");
   res.json({
     serverTime: serverTime.toISOString(),
     windowSeconds: LIVE_WINDOW_MS / 1000,
     payments,
+    gone,
   });
+});
+
+// The cashier turns one payment down (wrong amount, not the employee's bill,
+// ...): the payment is voided and its allowance amount goes back to that
+// month's balance, in one transaction. The employee's app notices on its next
+// status check, shows a message and returns to the home screen; they pay
+// again. Safe to repeat: a second reject of the same payment changes nothing.
+cashierRouter.post("/payments/:id/reject", requireCashier, async (req, res) => {
+  const id = z.string().trim().min(1).max(64).safeParse(req.params.id);
+  if (!id.success) return res.status(400).json({ error: "invalid_id" });
+
+  const outcome = await prisma.$transaction(async (tx) => {
+    const t = await tx.benefitTransaction.findUnique({ where: { id: id.data } });
+    if (!t) return "not_found" as const;
+    const voided = await tx.benefitTransaction.updateMany({
+      where: { id: t.id, status: "confirmed" },
+      data: { status: "void", voidedAt: new Date() },
+    });
+    if (voided.count === 0) return "already_rejected" as const;
+    await tx.$executeRaw`
+      UPDATE "BenefitPeriod" SET used = GREATEST(used - ${t.amount}, 0), "updatedAt" = now() WHERE id = ${t.periodId}
+    `;
+    console.log(`[cashier] rejected payment ${t.id} (bill ${t.billNo}, ${t.amount})`);
+    return "rejected" as const;
+  });
+  if (outcome === "not_found") return res.status(404).json({ error: "payment_not_found" });
+  res.json({ status: outcome });
 });
 
 const transactionsQuerySchema = z.object({

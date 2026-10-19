@@ -122,6 +122,15 @@ meRouter.get("/benefits/transactions", async (req: AuthedRequest, res) => {
   });
 });
 
+// Is this payment still standing? The app checks while it shows the code, so
+// it can send the employee back home if the cashier rejects it.
+meRouter.get("/benefits/transactions/:id/status", async (req: AuthedRequest, res) => {
+  const t = await prisma.benefitTransaction.findUnique({ where: { id: req.params.id } });
+  if (!t || t.employeeId !== req.auth!.employeeId) return res.status(404).json({ error: "transaction_not_found" });
+  res.set("Cache-Control", "no-store");
+  res.json({ id: t.id, status: t.status });
+});
+
 // 1,000,000 rupees is already far beyond any plausible single purchase at a
 // restaurant/retail outlet - this is purely a sanity ceiling, not a real
 // spending limit (that's what the allowance balance check is for). It

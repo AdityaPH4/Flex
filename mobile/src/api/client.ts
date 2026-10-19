@@ -78,6 +78,9 @@ export const api = {
       { method: "POST", body: params }
     ),
 
+  transactionStatus: (id: string) =>
+    request<{ id: string; status: string }>(`/api/me/benefits/transactions/${encodeURIComponent(id)}/status`),
+
   createReconciliationCode: (params: { transactionId: string }) =>
     request<ReconciliationCodeResponse>("/api/me/benefits/reconciliation-code", {
       method: "POST",

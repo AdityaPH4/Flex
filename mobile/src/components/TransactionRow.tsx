@@ -36,12 +36,14 @@ export function TransactionRow({
         <Text style={styles.day}>{formatRelativeDay(transaction.occurredAt)}</Text>
       </View>
       <View style={styles.otpBlock}>
-        {transaction.reconciliationCode ? (
+        {transaction.status === "void" ? (
+          <Text style={styles.day}>Rejected</Text>
+        ) : transaction.reconciliationCode ? (
           <Text style={styles.otp}>{transaction.reconciliationCode}</Text>
         ) : null}
       </View>
       <View style={styles.amountBlock}>
-        <Text style={styles.amount}>{formatMoney(transaction.amount)}</Text>
+        <Text style={[styles.amount, transaction.status === "void" && { textDecorationLine: "line-through", color: colors.textMuted }]}>{formatMoney(transaction.amount)}</Text>
         {transaction.cashAmount ? (
           <Text style={styles.cashNote}>+{formatMoney(transaction.cashAmount)} cash</Text>
         ) : null}

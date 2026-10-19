@@ -139,6 +139,7 @@ model BenefitTransaction {
   notes      String?
 
   status String @default("confirmed") // confirmed | void
+  voidedAt DateTime? // when the cashier rejected it (status void); the amount is returned to the period
 
   idempotencyKey String @unique // client-generated, prevents duplicate submission on retry
 

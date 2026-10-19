@@ -115,6 +115,21 @@ export default function RecordBenefitScreen() {
   const [codeLoading, setCodeLoading] = useState(false);
   const [codeError, setCodeError] = useState<string | null>(null);
   const [codeCopied, setCodeCopied] = useState(false);
+  // The cashier can reject a payment; while the code is on screen we check for that.
+  const [rejected, setRejected] = useState(false);
+
+  useEffect(() => {
+    if (!transactionId || rejected) return;
+    const timer = setInterval(async () => {
+      try {
+        const { status } = await api.transactionStatus(transactionId);
+        if (status === "void") setRejected(true);
+      } catch {
+        // offline or a blip: try again on the next tick
+      }
+    }, 2500);
+    return () => clearInterval(timer);
+  }, [transactionId, rejected]);
 
   const onCopyCode = async () => {
     if (!code) return;
@@ -426,6 +441,13 @@ export default function RecordBenefitScreen() {
             },
             { label: "Cancel", variant: "secondary", onPress: () => setShowConfirmPrompt(false) },
           ]}
+        />
+
+        <ConfirmDialog
+          visible={rejected}
+          title="Payment Rejected"
+          message="The cashier rejected this payment. Your balance is unchanged. Please make the payment again."
+          actions={[{ label: "OK", onPress: () => router.replace("/(tabs)/home") }]}
         />
 
         <ConfirmDialog

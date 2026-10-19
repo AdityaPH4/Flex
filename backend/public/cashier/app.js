@@ -305,7 +305,10 @@
     }
 
     const foot = el("div", "foot");
-    foot.append(el("span", "foot-note", people.length + (people.length === 1 ? " payer" : " payers")));
+    const reject = el("button", "btn danger", "Reject payment");
+    reject.type = "button";
+    reject.addEventListener("click", () => askReject(b));
+    foot.append(reject);
     const button = el("button", "btn primary", "Got it");
     button.type = "button";
     button.addEventListener("click", () => acknowledge(b));
@@ -392,6 +395,81 @@
     $("status-text").textContent = kind === "live" ? "Live" : "Reconnecting…";
   }
 
+  // ---------- rejecting a payment ----------
+
+  const rejectDialog = () => $("reject-dialog");
+  const closeReject = () => rejectDialog().classList.add("hidden");
+
+  // One payer: straight to the confirmation. Several people paid this bill:
+  // pick whose payment first.
+  function askReject(b) {
+    if (b.payments.length === 1) return confirmReject(b, b.payments[0]);
+    $("reject-title").textContent = "Reject which payment?";
+    $("reject-text").textContent = "Bill " + b.billNo + " was paid by " + b.payments.length + " people.";
+    const box = $("reject-actions");
+    box.textContent = "";
+    for (const p of b.payments) {
+      const pick = el("button", "btn ghost", p.employeeName + " · " + rupees(p.allowanceAmount));
+      pick.type = "button";
+      pick.addEventListener("click", () => confirmReject(b, p));
+      box.append(pick);
+    }
+    const cancel = el("button", "btn ghost", "Cancel");
+    cancel.type = "button";
+    cancel.addEventListener("click", closeReject);
+    box.append(cancel);
+    $("reject-error").classList.add("hidden");
+    rejectDialog().classList.remove("hidden");
+  }
+
+  function confirmReject(b, p) {
+    $("reject-title").textContent = "Reject this payment?";
+    $("reject-text").textContent =
+      p.employeeName + " (ID " + p.employeeCode + ") · " + rupees(p.allowanceAmount) + " · Bill " + b.billNo +
+      ". Their app goes back to the home screen, the amount returns to their balance, and they have to pay again.";
+    const box = $("reject-actions");
+    box.textContent = "";
+    const keep = el("button", "btn ghost", "Keep it");
+    keep.type = "button";
+    keep.addEventListener("click", closeReject);
+    const go = el("button", "btn danger", "Yes, reject");
+    go.type = "button";
+    go.addEventListener("click", () => doReject(b, p, go));
+    box.append(keep, go);
+    $("reject-error").classList.add("hidden");
+    rejectDialog().classList.remove("hidden");
+  }
+
+  async function doReject(b, p, button) {
+    button.disabled = true;
+    try {
+      await api("/payments/" + encodeURIComponent(p.id) + "/reject", { method: "POST" });
+    } catch (err) {
+      button.disabled = false;
+      if (err.status === 401) return signOut("Your session ended. Please sign in again.");
+      $("reject-error").textContent = "Couldn't reject it. Check the connection and try again.";
+      $("reject-error").classList.remove("hidden");
+      return;
+    }
+    closeReject();
+    // Take the payer off the card now; the next poll confirms it (and updates other screens).
+    const left = b.payments.filter((x) => x.id !== p.id);
+    if (left.length === 0) state.payments.delete(b.id);
+    else {
+      const sum = (f) => Math.round(left.reduce((n, x) => n + f(x), 0) * 100) / 100;
+      state.payments.set(b.id, {
+        ...b,
+        payments: left,
+        allowanceAmount: sum((x) => x.allowanceAmount),
+        cashAmount: sum((x) => x.cashAmount),
+        totalAmount: sum((x) => x.totalAmount),
+        lastMs: Math.max(...left.map((x) => Date.parse(x.createdAt))),
+      });
+    }
+    renderLive();
+    if (state.tab === "all") loadTransactions();
+  }
+
   function acknowledge(b) {
     state.seen.add(seenKey(b));
     store.set(KEYS.seen, JSON.stringify([...state.seen].slice(-SEEN_CAP)));
@@ -416,6 +494,7 @@
       if (prev && billSig(prev) === billSig(b)) continue;
       state.payments.set(b.id, b);
       changed = true;
+      if (prev && b.payments.length < prev.payments.length) continue; // a payer was rejected: update, don't announce
       // Only a new payer or total is news; an OTP arriving just fills in the card.
       if (prev && prev.payments.length === b.payments.length && prev.totalAmount === b.totalAmount) continue;
 
@@ -447,6 +526,8 @@
     state.skewMs = serverMs - Date.now();
     state.cursorMs = serverMs;
     if (data.windowSeconds > 0) state.windowMs = data.windowSeconds * 1000;
+    // Bills whose every payment was rejected (on this or another screen).
+    for (const id of data.gone || []) if (state.payments.delete(id)) renderLive();
     mergePayments(data.payments, serverMs);
   }
 
