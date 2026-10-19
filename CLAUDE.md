@@ -24,7 +24,11 @@ and things to be careful not to break.
   amounts and type the OTPs into Digitory. Two
   tabs: a "Live payments" board (2x2, growing to 3x2/3x3/4x3 as bills arrive so nothing scrolls up to 12) that keeps each bill for 10 minutes, and
   "All Transactions" (today, IST day, searchable by name/employee code/bill
-  no). Read-only: Digitory is still updated by hand. Shared `CASHIER_PASSWORD` login, like the admin dashboard. The outlet
+  no). Digitory is still updated by hand, but each payer has a "Reject payment" button
+  (`POST /api/cashier/payments/:id/reject`): it voids the payment (`status` void,
+  `voidedAt`), returns the amount to that month's balance, and the employee's app
+  (polling `GET /api/me/benefits/transactions/:id/status` while the code is shown)
+  shows "Payment Rejected" and goes back home to pay again. Shared `CASHIER_PASSWORD` login, like the admin dashboard. The outlet
   list it offers (`backend/src/lib/outlets.ts`) is currently ONLY Indiranagar
   (with one outlet the screen skips the picker); the employee app's `OUTLETS`
   in `mobile/app/record-benefit.tsx` still lists three and must be brought in
