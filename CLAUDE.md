@@ -39,7 +39,8 @@ and things to be careful not to break.
 
 1. **Payments are keyed by BILL NUMBER, and each payment still gets an OTP
    (branch `bill-no-workflow`).** The employee enters outlet + amount + a
-   **mandatory bill number**, confirms, and the app then generates and shows
+   **mandatory bill number (exactly 8 digits, digits only - enforced in the app
+   and in `backend/src/routes/me.ts`)**, confirms, and the app then generates and shows
    the 6-digit OTP (the same `ReconciliationCode` flow as before); the cashier
    types it into Digitory. Our backend never calls Digitory and Digitory never
    calls us; nothing verifies the OTP in real time and Digitory processes the

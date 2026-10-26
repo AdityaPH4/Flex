@@ -30,6 +30,9 @@ interface Split {
   cash: number; // portion paid separately, outside the benefit system
 }
 
+// Bill numbers are exactly this many digits; the server enforces it too (backend/src/routes/me.ts).
+const BILL_NO_DIGITS = 8;
+
 const OUTLETS = ["TOIT Indiranagar", "TOIT Bagmane", "TOIT Pune"];
 
 function formatCode(code: string): string {
@@ -140,7 +143,7 @@ export default function RecordBenefitScreen() {
 
   const total = parseFloat(amount) || 0;
 
-  const canSubmit = total > 0 && billNo.trim().length > 0; // the bill number is mandatory
+  const canSubmit = total > 0 && billNo.length === BILL_NO_DIGITS; // the bill number is mandatory: exactly 8 digits
   const [outletError, setOutletError] = useState(false);
 
   const fetchCode = useCallback(async (forTransactionId: string) => {
@@ -346,16 +349,17 @@ export default function RecordBenefitScreen() {
             </View>
 
             <View>
-              <Text style={styles.fieldLabel}>Bill No. (required)</Text>
+              <Text style={styles.fieldLabel}>Bill No. (8 digits, required)</Text>
               <TextInput
                 value={billNo}
                 onChangeText={(v) => {
-                  setBillNo(v.replace(/[^0-9]/g, ""));
+                  setBillNo(v.replace(/[^0-9]/g, "").slice(0, BILL_NO_DIGITS));
                   idempotencyKeyRef.current = null; // a different bill is a different payment
                 }}
-                placeholder="Enter the bill/receipt number"
+                placeholder="8-digit bill number"
                 placeholderTextColor={colors.textMuted}
                 keyboardType="number-pad"
+                maxLength={BILL_NO_DIGITS}
                 style={styles.input}
               />
             </View>

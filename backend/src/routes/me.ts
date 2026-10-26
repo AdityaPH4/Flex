@@ -147,7 +147,7 @@ const createTransactionSchema = z.object({
   outletId: z.string().uuid().optional(),
   outletName: z.string().trim().min(1).max(120),
   // Mandatory: the bill number is now what the cashier and the reconciliation go by.
-  billNo: z.string().trim().min(1).max(120),
+  billNo: z.string().trim().regex(/^\d{8}$/, "bill number must be exactly 8 digits"),
   occurredAt: z.string().datetime().optional(),
   notes: z.string().max(280).optional(),
   idempotencyKey: z.string().min(8).max(128),
