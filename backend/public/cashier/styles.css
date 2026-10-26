@@ -444,7 +444,7 @@ body.on-main { min-height: 0; overflow: hidden; }
   padding: 12px 16px;
   box-shadow: 0 2px 6px rgba(36, 31, 26, 0.04);
 }
-/* One card per bill: its payers sit inside it, divided by a thin line. */
+/* One card per bill: its payers sit inside it, no divider between them. */
 .tx-card {
   background: var(--surface);
   border-radius: 14px;
@@ -452,7 +452,7 @@ body.on-main { min-height: 0; overflow: hidden; }
   overflow: hidden;
 }
 .tx-card .tx-row { background: none; box-shadow: none; border-radius: 0; }
-.tx-card .tx-row + .tx-row { border-top: 1px solid var(--line); }
+.tx-card .tx-row { padding-top: 10px; padding-bottom: 10px; }
 .tx-head {
   position: sticky;
   top: 0;
