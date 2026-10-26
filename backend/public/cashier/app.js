@@ -425,8 +425,7 @@
   function confirmReject(b, p) {
     $("reject-title").textContent = "Reject this payment?";
     $("reject-text").textContent =
-      p.employeeName + " (ID " + p.employeeCode + ") · " + rupees(p.allowanceAmount) + " · Bill " + b.billNo +
-      ". Their app goes back to the home screen, the amount returns to their balance, and they have to pay again.";
+      p.employeeName + " (ID " + p.employeeCode + ") · " + rupees(p.allowanceAmount) + " · Bill " + b.billNo + ".";
     const box = $("reject-actions");
     box.textContent = "";
     const keep = el("button", "btn ghost", "Keep it");
