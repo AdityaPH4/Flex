@@ -603,7 +603,18 @@
     const tokens = state.query.toLowerCase().split(/\s+/).filter(Boolean);
     const rows = tokens.length ? tx.list.filter((t) => tokens.every((tok) => t.haystack.includes(tok))) : tx.list;
     const frag = document.createDocumentFragment();
-    for (const t of rows) frag.append(buildTxRow(t));
+    // People who paid the same bill share one white card (newest bill first).
+    const bills = new Map();
+    for (const t of rows) {
+      const key = t.billNo ? (t.outlet || "") + "|" + t.billNo : t.id;
+      if (!bills.has(key)) bills.set(key, []);
+      bills.get(key).push(t);
+    }
+    for (const group of bills.values()) {
+      const card = el("div", "tx-card");
+      for (const t of group) card.append(buildTxRow(t));
+      frag.append(card);
+    }
     list.append(frag);
 
     $("all-title").textContent = "Today · " + dayLabel(tx.dayStartMs);
