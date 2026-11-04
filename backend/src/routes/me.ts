@@ -7,7 +7,7 @@ import { requireAuth, type AuthedRequest } from "../middleware/auth";
 import { getOrCreatePeriod } from "../lib/period";
 import { recordBenefitSpend, InsufficientBalanceError, WalletNotValidError, EmployeeInactiveError } from "../lib/spend";
 import { roundMoney } from "../lib/money";
-import { effectiveAllowance, lastDayEnds } from "../lib/lastDay";
+import { effectiveAllowance, walletEnded } from "../lib/lastDay";
 import type { Prisma } from "@prisma/client";
 
 type TransactionWithOutlet = Prisma.BenefitTransactionGetPayload<{
@@ -55,7 +55,7 @@ meRouter.get("/benefits/current", async (req: AuthedRequest, res) => {
   });
   const used = Number(period.used);
   const allowance = effectiveAllowance(Number(period.allowance), lastWorkingDay, period.year, period.month, used);
-  const ended = !!lastWorkingDay && Date.now() >= lastDayEnds(lastWorkingDay).getTime();
+  const ended = walletEnded(walletValidTo, lastWorkingDay);
   const day = (d: Date | null) => (d ? d.toISOString().slice(0, 10) : null); // YYYY-MM-DD, same as the admin export
   // The wallet ends at whichever comes first.
   const validTo = [day(walletValidTo), day(lastWorkingDay)].filter(Boolean).sort()[0] ?? null;

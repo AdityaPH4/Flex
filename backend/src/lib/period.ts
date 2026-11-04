@@ -1,6 +1,6 @@
 import { prisma } from "../db";
 import { roundMoney } from "./money";
-import { effectiveAllowance } from "./lastDay";
+import { effectiveAllowance, walletEnded } from "./lastDay";
 import type { Prisma, PrismaClient } from "@prisma/client";
 
 type Db = PrismaClient | Prisma.TransactionClient;
@@ -127,7 +127,7 @@ export async function listCurrentBalancesForActiveEmployees(
       lastWorkingDay: employee.lastWorkingDay,
       allowance,
       used,
-      remaining: Math.max(0, roundMoney(allowance - used)),
+      remaining: walletEnded(employee.walletValidTo, employee.lastWorkingDay) ? 0 : Math.max(0, roundMoney(allowance - used)),
     };
   });
 }

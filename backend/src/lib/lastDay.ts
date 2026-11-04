@@ -18,3 +18,8 @@ export function effectiveAllowance(allowance: number, lwd: Date | null, year: nu
   // used, and prorating that again would show an allowance below the amount used.
   return Math.max(used, roundMoney((allowance * Math.min(lwd.getUTCDate(), PRORATION_DAYS)) / PRORATION_DAYS));
 }
+
+/** True once the wallet is over: past the end of its valid-to day or of the last working day, whichever is earlier. */
+export function walletEnded(validTo: Date | null, lwd: Date | null, at = new Date()): boolean {
+  return [validTo, lwd].some((d) => d && at >= lastDayEnds(d));
+}

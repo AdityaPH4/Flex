@@ -1,6 +1,6 @@
 import { prisma } from "../db";
 import { getOrCreatePeriod } from "./period";
-import { effectiveAllowance, lastDayEnds } from "./lastDay";
+import { effectiveAllowance, walletEnded } from "./lastDay";
 import type { Prisma, PrismaClient } from "@prisma/client";
 
 type Db = PrismaClient | Prisma.TransactionClient;
@@ -81,8 +81,7 @@ export async function recordBenefitSpend(input: RecordSpendInput, existingTx?: D
     const spendAt = input.occurredAt ?? new Date();
     if (
       (employee.walletValidFrom && spendAt < employee.walletValidFrom) ||
-      (employee.walletValidTo && spendAt > employee.walletValidTo) ||
-      (employee.lastWorkingDay && spendAt >= lastDayEnds(employee.lastWorkingDay))
+      walletEnded(employee.walletValidTo, employee.lastWorkingDay, spendAt)
     ) {
       throw new WalletNotValidError();
     }
