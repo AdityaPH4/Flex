@@ -64,6 +64,7 @@
         <button class="nav-item" data-page="revoke"><i class="ti ti-wallet-off"></i>Revoke balance</button>
         <button class="nav-item" data-page="import-export"><i class="ti ti-file-import"></i>Import / Export</button>
         <button class="nav-item" data-page="reconcile"><i class="ti ti-refresh"></i>Reconcile</button>
+        <button class="nav-item" data-page="events"><i class="ti ti-list-details"></i>Activity log</button>
         <button id="nav-update-balance" class="nav-item hidden" data-page="update-balance"><i class="ti ti-coin"></i>Update balance</button>
       </nav>
       <button id="password-open" class="nav-item"><i class="ti ti-key"></i>Change password</button>
@@ -101,7 +102,7 @@
       <section id="page-revoke" class="page hidden">
         <header class="page-header"><h1>Revoke balance</h1></header>
         <div class="panel">
-          <p class="hint">For an employee who is leaving. Search by name or employee code, then revoke what is left of this month's balance. The employee needs an LWD (last working day) in the roster upload first.</p>
+          <p class="hint">Search by name or employee code, then revoke what is left of this month's balance. The employee is also signed out of the app on every phone.</p>
           <input type="text" id="revoke-search" class="search-input" placeholder="Search by name or employee code" autocomplete="off" />
           <div class="table-wrap">
             <table>
@@ -135,6 +136,7 @@
               <i class="ti ti-file-upload"></i>Upload Excel
               <input type="file" id="import-file-input" accept=".xlsx,.xls" class="visually-hidden" />
             </label>
+            <button id="import-template-button" type="button" class="secondary-button"><i class="ti ti-file-download"></i>Download template</button>
             <span id="import-filename" class="hint"></span>
             <button id="import-run-button" class="primary-button" disabled><i class="ti ti-upload"></i>Run Import</button>
           </div>
@@ -197,6 +199,7 @@
               <i class="ti ti-file-upload"></i>Upload Excel
               <input type="file" id="balance-file-input" accept=".xlsx,.xls" class="visually-hidden" />
             </label>
+            <button id="balance-template-button" type="button" class="secondary-button"><i class="ti ti-file-download"></i>Download template</button>
             <span id="balance-filename" class="hint"></span>
             <button id="balance-run-button" class="primary-button" disabled><i class="ti ti-coin"></i>Update balances</button>
           </div>
@@ -249,6 +252,33 @@
             </table>
           </div>
           <p id="reconcile-empty" class="empty-state">Import a CSV to get started.</p>
+        </div>
+      </section>
+
+      <section id="page-events" class="page hidden">
+        <header class="page-header">
+          <h1>Activity log</h1>
+          <p class="subtitle">Everything employees, the cashier and the admin do in the system, newest first. Entries are kept for 20 days.</p>
+        </header>
+        <div class="panel">
+          <div class="search-row">
+            <input type="text" id="events-employee" class="search-input" placeholder="Employee code" autocomplete="off" />
+            <input type="text" id="events-event" class="search-input" placeholder="Event, e.g. transactions or reject" autocomplete="off" />
+            <select id="events-days" class="search-input">
+              <option value="1">Last 24 hours</option>
+              <option value="3">Last 3 days</option>
+              <option value="7">Last 7 days</option>
+              <option value="20" selected>Last 20 days</option>
+            </select>
+          </div>
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th>Time (IST)</th><th>Who</th><th>Event</th><th>Result</th><th>Details</th><th>IP</th></tr></thead>
+              <tbody id="events-body"></tbody>
+            </table>
+          </div>
+          <p id="events-empty" class="empty-state hidden">Nothing logged for these filters.</p>
+          <button id="events-more" class="secondary-button hidden" type="button">Load older</button>
         </div>
       </section>
 

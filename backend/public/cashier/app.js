@@ -13,13 +13,15 @@
  *   - Live payments: a board of the bills paid in the last 10 minutes, 2x2 and
  *     growing to 3x2, 3x3, 4x3 as more arrive so everything stays in view (the
  *     server sends the exact length as windowSeconds; it runs from a bill's
- *     latest payer). Older ones drop off by themselves; "Got it" clears one
+ *     latest payer). Older ones drop off by themselves; "Accept payment" clears one
  *     early, and it comes back if someone else then pays the same bill.
  *   - All Transactions: every payment recorded today (the IST calendar day),
  *     one row per employee payment with its OTP, searchable by name, employee code or bill number.
  *
- * Read-only: nothing here changes or verifies a payment. "Got it" only hides
- * a card on this device (remembered in localStorage).
+ * Two actions change a payment: "Reject payment" voids one payer, and "Accept
+ * payment" (after a confirmation) marks the whole bill accepted so each payer's
+ * phone shows the success tick. The card is then hidden on this device
+ * (remembered in localStorage). Nothing here verifies an OTP.
  */
 (() => {
   "use strict";
@@ -87,7 +89,7 @@
 
     // live board
     payments: new Map(), // id -> payment
-    seen: loadSeen(), // ids the cashier has tapped "Got it" on
+    seen: loadSeen(), // ids the cashier has tapped "Accept payment" on
     windowMs: DEFAULT_WINDOW_MS,
     cursorMs: 0, // server time of the last successful poll
     skewMs: 0, // server clock minus this device's clock
@@ -230,7 +232,7 @@
   // The banner takes up room, so hiding it moves everything below it. The tap
   // that unlocks the audio is also the tap that hides the banner - if that
   // happened while the finger was still down, the card would slide away from
-  // under it and the tap (say, on "Got it") would be lost. So while a pointer
+  // under it and the tap (say, on "Accept payment") would be lost. So while a pointer
   // is down the banner is left as it is, and settled once the pointer is up.
   let pointerDown = false;
   function updateSoundBanner() {
@@ -257,7 +259,7 @@
   // Cleared per head-count: if another person pays the same bill afterwards the
   // bill is a different "state" and comes back onto the board.
   const seenKey = (b) => b.id + "#" + b.payments.length;
-  // On the board = a payer in the last window and not cleared with "Got it".
+  // On the board = a payer in the last window and not cleared with "Accept payment".
   const onBoard = (b) => !state.seen.has(seenKey(b)) && nowMs() - b.lastMs < state.windowMs;
 
   function buildAlert(b) {
@@ -309,9 +311,9 @@
     reject.type = "button";
     reject.addEventListener("click", () => askReject(b));
     foot.append(reject);
-    const button = el("button", "btn primary", "Got it");
+    const button = el("button", "btn primary", "Accept payment");
     button.type = "button";
-    button.addEventListener("click", () => acknowledge(b));
+    button.addEventListener("click", () => askAccept(b));
     foot.append(button);
     inner.append(foot);
 
@@ -396,9 +398,29 @@
   }
 
   // ---------- rejecting a payment ----------
+  // (The same dialog also asks before accepting - see askAccept.)
 
   const rejectDialog = () => $("reject-dialog");
   const closeReject = () => rejectDialog().classList.add("hidden");
+
+  // Deliberate friction: accepting takes the bill off the board, so the cashier confirms first.
+  function askAccept(b) {
+    $("reject-title").textContent = "Accept this payment?";
+    $("reject-text").textContent =
+      "Bill " + b.billNo + " · total " + rupees(b.totalAmount) +
+      (b.cashAmount > 0 ? " · collect " + rupees(b.cashAmount) + " in cash" : "") + ".";
+    const box = $("reject-actions");
+    box.textContent = "";
+    const back = el("button", "btn ghost", "Cancel");
+    back.type = "button";
+    back.addEventListener("click", closeReject);
+    const go = el("button", "btn primary", "Yes, accept");
+    go.type = "button";
+    go.addEventListener("click", () => doAccept(b, go));
+    box.append(back, go);
+    $("reject-error").classList.add("hidden");
+    rejectDialog().classList.remove("hidden");
+  }
 
   // One payer: straight to the confirmation. Several people paid this bill:
   // pick whose payment first.
@@ -439,6 +461,22 @@
     rejectDialog().classList.remove("hidden");
   }
 
+  // Tells the server (each payer's phone then shows the success tick), then clears the card.
+  async function doAccept(b, button) {
+    button.disabled = true;
+    try {
+      await api("/payments/accept", { method: "POST", body: { ids: b.payments.map((p) => p.id) } });
+    } catch (err) {
+      button.disabled = false;
+      if (err.status === 401) return signOut("Your session ended. Please sign in again.");
+      $("reject-error").textContent = "Couldn't accept it. Check the connection and try again.";
+      $("reject-error").classList.remove("hidden");
+      return;
+    }
+    closeReject();
+    acknowledge(b);
+  }
+
   async function doReject(b, p, button) {
     button.disabled = true;
     try {
@@ -446,7 +484,9 @@
     } catch (err) {
       button.disabled = false;
       if (err.status === 401) return signOut("Your session ended. Please sign in again.");
-      $("reject-error").textContent = "Couldn't reject it. Check the connection and try again.";
+      $("reject-error").textContent = err.message === "already_accepted"
+        ? "This bill was already accepted, so it can't be rejected now."
+        : "Couldn't reject it. Check the connection and try again.";
       $("reject-error").classList.remove("hidden");
       return;
     }

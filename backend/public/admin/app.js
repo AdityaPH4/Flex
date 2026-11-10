@@ -216,6 +216,48 @@ document.getElementById("sidebar-toggle").addEventListener("click", () => {
   sidebar.classList.toggle("open");
 });
 
+// ---------------- Activity log ----------------
+
+const eventsBody = document.getElementById("events-body");
+const eventsMore = document.getElementById("events-more");
+let eventsCursor = null;
+let eventsGen = 0; // a slower, older request must not overwrite a newer one
+
+function eventRow(e) {
+  const who = e.employeeCode ? `${e.employeeName} (${e.employeeCode})` : e.actor;
+  const result = e.error ? `${e.status} ${e.error}` : String(e.status);
+  const detail = e.detail ? Object.entries(e.detail).map(([k, v]) => `${k}: ${v}`).join(", ") : "";
+  const time = new Date(e.at).toLocaleString("en-IN", {
+    timeZone: "Asia/Kolkata", day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit", second: "2-digit",
+  });
+  return `<tr><td>${escapeHtml(time)}</td><td>${escapeHtml(who)}</td><td>${escapeHtml(e.event)}</td><td>${escapeHtml(result)}</td><td class="log-detail">${escapeHtml(detail)}</td><td>${escapeHtml(e.ip ?? "—")}</td></tr>`;
+}
+
+async function loadEvents(more = false) {
+  const gen = ++eventsGen;
+  const params = new URLSearchParams({ days: document.getElementById("events-days").value });
+  const code = document.getElementById("events-employee").value.trim();
+  const event = document.getElementById("events-event").value.trim();
+  if (code) params.set("employeeCode", code);
+  if (event) params.set("event", event);
+  if (more && eventsCursor) params.set("cursor", eventsCursor);
+  const data = await api(`/events?${params}`);
+  if (gen !== eventsGen) return;
+  if (!more) eventsBody.innerHTML = "";
+  eventsBody.insertAdjacentHTML("beforeend", data.events.map(eventRow).join(""));
+  eventsCursor = data.nextCursor;
+  eventsMore.classList.toggle("hidden", !eventsCursor);
+  document.getElementById("events-empty").classList.toggle("hidden", eventsBody.children.length > 0);
+}
+
+let eventsTimer;
+const reloadEventsSoon = () => { clearTimeout(eventsTimer); eventsTimer = setTimeout(() => loadEvents(), 300); };
+document.querySelector('.nav-item[data-page="events"]').addEventListener("click", () => loadEvents());
+document.getElementById("events-employee").addEventListener("input", reloadEventsSoon);
+document.getElementById("events-event").addEventListener("input", reloadEventsSoon);
+document.getElementById("events-days").addEventListener("change", () => loadEvents());
+eventsMore.addEventListener("click", () => loadEvents(true));
+
 // ---------------- Update balance (testing only) ----------------
 
 let balanceRows = null;
@@ -413,18 +455,14 @@ function renderRevoke() {
     btn.type = "button";
     btn.className = "danger-button";
     btn.textContent = "Revoke balance";
-    if (!e.lastWorkingDay) {
-      btn.disabled = true;
-      btn.title = "This employee has no LWD (last working day) in the roster upload";
-    } else if (!(e.remaining > 0)) {
-      btn.disabled = true;
-      btn.title = "Nothing left to revoke";
-    }
     btn.addEventListener("click", async () => {
+      const facts = [["Employee", `${e.name} (${e.employeeCode})`]];
+      if (e.lastWorkingDay) facts.push(["Last working day", dateOnly(e.lastWorkingDay)]);
+      facts.push(["Amount revoked", money(e.remaining)]);
       const go = await showDialog({
         title: "Revoke balance?",
-        message: "Their remaining balance for this month becomes ₹0.00. This can't be undone from here.",
-        facts: [["Employee", `${e.name} (${e.employeeCode})`], ["Last working day", dateOnly(e.lastWorkingDay)], ["Amount revoked", money(e.remaining)]],
+        message: "Their remaining balance for this month becomes ₹0.00 and they are signed out of the app. This can't be undone from here.",
+        facts,
         confirmLabel: "Revoke balance",
         danger: true,
       });
@@ -461,6 +499,18 @@ function cellToText(v) {
   if (v instanceof Date) return `${String(v.getDate()).padStart(2, "0")}-${MONTHS[v.getMonth()]}-${v.getFullYear()}`;
   return v == null ? "" : String(v).trim();
 }
+
+// Blank upload templates: just the header row. Uploads match columns by these
+// exact names (any order, extra columns ignored), so starting from here avoids typos.
+function downloadTemplate(headers, filename) {
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet([headers]), "Sheet1");
+  XLSX.writeFile(wb, filename);
+}
+// Same columns and order as the export (GET /employees/export) and importRowSchema in admin.ts.
+const IMPORT_COLUMNS = ["wallet_no", "ref_no", "amount", "limit", "customer_name", "phone_number", "email_id", "enable_otp", "valid_from", "valid_to", "Grade", "DOJ", "Cost Center", "LWD"];
+document.getElementById("import-template-button").addEventListener("click", () => downloadTemplate(IMPORT_COLUMNS, "employee-import-template.xlsx"));
+document.getElementById("balance-template-button").addEventListener("click", () => downloadTemplate(["wallet", "new_balance"], "update-balance-template.xlsx"));
 
 // First sheet of the workbook -> one object per row, keyed by the header row.
 async function readExcelRows(file) {

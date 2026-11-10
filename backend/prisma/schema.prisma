@@ -140,6 +140,7 @@ model BenefitTransaction {
 
   status String @default("confirmed") // confirmed | void
   voidedAt DateTime? // when the cashier rejected it (status void); the amount is returned to the period
+  acceptedAt DateTime? // when the cashier accepted the bill on the cashier screen; the employee's app then shows the success tick. Can't be rejected after this
 
   idempotencyKey String @unique // client-generated, prevents duplicate submission on retry
 
@@ -207,6 +208,25 @@ model IdempotencyKey {
   key        String   @id
   responseJson String
   createdAt  DateTime @default(now())
+}
+
+// Who did what: one row per API request from the employee app, the cashier
+// screen and the admin dashboard (see lib/eventLog.ts). Kept for 20 days, then
+// deleted by a job that starts with the server. No relation to Employee on
+// purpose: a log row must never block anything.
+model EventLog {
+  id         String   @id @default(uuid())
+  at         DateTime @default(now())
+  actor      String   // employee | cashier | admin | anonymous (not signed in, e.g. a failed login)
+  employeeId String?  // set when actor is employee
+  event      String   // "POST /api/me/benefits/transactions"
+  status     Int      // HTTP status the API answered with
+  error      String?  // the API's error code when it refused
+  detail     Json?    // route params + a few facts a handler chose to keep; never request bodies
+  ip         String?
+
+  @@index([at])
+  @@index([employeeId, at])
 }
 
 // The one admin's own password (hash only). The row is created when she first

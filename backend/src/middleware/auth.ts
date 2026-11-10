@@ -1,6 +1,7 @@
 import type { Request, Response, NextFunction } from "express";
 import { verifySessionToken } from "../lib/jwt";
 import { prisma } from "../db";
+import { setLog } from "../lib/eventLog";
 
 export interface AuthedRequest extends Request {
   auth?: {
@@ -44,6 +45,9 @@ export async function requireAuth(
   if (typeof payload.sessionId !== "string") {
     return res.status(401).json({ error: "invalid_or_expired_token" });
   }
+
+  // The signature is good, so this is that employee even if the checks below refuse them.
+  setLog(res, { actor: "employee", employeeId: payload.employeeId });
 
   const session = await prisma.session.findUnique({
     where: { id: payload.sessionId },

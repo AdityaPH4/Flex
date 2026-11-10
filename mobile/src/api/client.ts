@@ -79,7 +79,7 @@ export const api = {
     ),
 
   transactionStatus: (id: string) =>
-    request<{ id: string; status: string }>(`/api/me/benefits/transactions/${encodeURIComponent(id)}/status`),
+    request<{ id: string; status: string; accepted?: boolean }>(`/api/me/benefits/transactions/${encodeURIComponent(id)}/status`),
 
   createReconciliationCode: (params: { transactionId: string }) =>
     request<ReconciliationCodeResponse>("/api/me/benefits/reconciliation-code", {

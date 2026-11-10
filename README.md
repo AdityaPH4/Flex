@@ -331,7 +331,7 @@ that outlet appear, on both tabs below.
   scrolls until there are more than 12. One bill number at one outlet is one card, however
   many employees paid it, each payer listed with their own OTP (a long list
   scrolls inside the card). A bill stays for **10 minutes** from its latest
-  payment and then drops off by itself; "Got it" clears a card sooner (and it
+  payment and then drops off by itself; "Accept payment" (after a confirmation) clears a card sooner (and it
   comes back if someone else then pays that bill). The length is
   `LIVE_WINDOW_MS` in `backend/src/routes/cashier.ts` (the screen reads it
   from the `windowSeconds` field of the feed). The screen asks
@@ -351,8 +351,12 @@ that outlet appear, on both tabs below.
 **On the device:** it beeps on a new payment (browsers only allow sound after
 a tap - a banner says so after a reload), keeps the screen awake, shows
 "Reconnecting..." and recovers by itself if the connection drops, and
-remembers which cards were cleared ("Got it" is stored on that device only,
-not on the server). After a reload the board still shows everything from the
+remembers which cards were cleared (hiding the card is stored on that device
+only). "Accept payment" asks for confirmation, then also tells the server
+(`acceptedAt` on every payer of the bill): each payer's app switches from
+"Payment in progress" to a success tick, and the payment can no longer be
+rejected. A rejected payment sends the employee's app back to the payment form
+with that bill's details filled in. After a reload the board still shows everything from the
 last 10 minutes that wasn't cleared; it just doesn't beep again for payments
 older than two minutes.
 
@@ -372,7 +376,7 @@ Source: `backend/src/routes/cashier.ts` (API) and `backend/public/cashier/`
 | POST | `/api/admin/login` | - | Admin login (shared password) |
 | GET | `/api/admin/overview` | admin | Aggregate stats across all employees |
 | GET | `/api/admin/employees` | admin | Every active employee's current balance (allowance already prorated for someone leaving this month) |
-| POST | `/api/admin/employees/:employeeCode/revoke-balance` | admin | Take back this month's remaining balance of an employee who has an LWD (last working day) from the roster upload |
+| POST | `/api/admin/employees/:employeeCode/revoke-balance` | admin | Take back any employee's remaining balance for this month and sign them out of the app on every device |
 | GET | `/api/admin/transactions` | admin | Every benefit transaction, paginated |
 | GET | `/api/admin/reconciliation-codes` | admin | Every OTP generated, paginated |
 | POST | `/api/me/benefits/reconciliation-code` | employee | Generate the 6-digit OTP for a recorded payment |
@@ -381,6 +385,8 @@ Source: `backend/src/routes/cashier.ts` (API) and `backend/public/cashier/`
 | GET | `/api/cashier/outlets` | cashier | The outlets a till can be set to |
 | GET | `/api/cashier/payments` | cashier | Bills paid in the last 10 minutes, one entry per bill with all its payers - the live board (`outlet`, `since`, `limit`) |
 | GET | `/api/cashier/transactions` | cashier | Every confirmed payment since midnight IST, newest first (`outlet`) |
+| POST | `/api/cashier/payments/accept` | cashier | Accept a bill: `{ ids: [...] }` = every payer on the card; sets `acceptedAt` so their apps show the success tick |
+| POST | `/api/cashier/payments/:id/reject` | cashier | Void one payer's payment and return the amount to their balance; 409 `already_accepted` once accepted |
 
 "employee" auth = `Authorization: Bearer <employee session token>`.
 "admin" auth = `Authorization: Bearer <admin token>` (from `/api/admin/login`) -

@@ -5,6 +5,7 @@ import { env } from "../env";
 import { verifyGoogleIdToken } from "../lib/googleAuth";
 import { signSessionToken } from "../lib/jwt";
 import { requireAuth, type AuthedRequest } from "../middleware/auth";
+import { setLog } from "../lib/eventLog";
 
 export const authRouter = Router();
 
@@ -33,12 +34,14 @@ authRouter.post("/google/verify", async (req, res) => {
     // Internal employee-only system: it's fine to say plainly that the
     // Google account isn't registered (an HR/admin-provisioning flow, not
     // public signup).
+    setLog(res, { detail: { email } });
     return res.status(404).json({ error: "google_account_not_registered" });
   }
 
   const session = await prisma.session.create({
     data: { employeeId: employee.id, deviceId, deviceName },
   });
+  setLog(res, { actor: "employee", employeeId: employee.id, detail: { deviceName } });
 
   const token = signSessionToken({
     sessionId: session.id,

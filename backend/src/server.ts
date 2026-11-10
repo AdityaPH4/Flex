@@ -14,6 +14,7 @@ import { authRouter } from "./routes/auth";
 import { meRouter } from "./routes/me";
 import { adminRouter } from "./routes/admin";
 import { cashierRouter } from "./routes/cashier";
+import { eventLogger, startEventLogPruning } from "./lib/eventLog";
 
 // Last-resort safety net for anything that still manages to reject outside
 // of a request entirely (e.g. background code, not caught by the line
@@ -30,6 +31,8 @@ const app = express();
 // throttle keys on. Without this every request would look like 127.0.0.1.
 app.set("trust proxy", "loopback");
 app.use(cors());
+// Before the body parser so a request it rejects is still logged.
+app.use(eventLogger);
 // Default 100kb is too small for a reconciliation upload - the browser
 // parses Digitory's CSV client-side and posts up to 5000 rows as JSON,
 // which can run a few hundred KB depending on column widths.
@@ -74,4 +77,5 @@ app.use(
 
 app.listen(env.port, () => {
   console.log(`TOIT benefits API listening on :${env.port}`);
+  startEventLogPruning();
 });

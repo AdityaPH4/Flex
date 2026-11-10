@@ -22,6 +22,7 @@ import { useAuth } from "@/auth/AuthContext";
 import { Card } from "@/components/Card";
 import { PrimaryButton } from "@/components/PrimaryButton";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
+import { PaymentSuccess } from "@/components/PaymentSuccess";
 import { formatMoney, roundMoney } from "@/utils/money";
 import { colors, radii, spacing, shadows, type as t } from "@/theme/tokens";
 
@@ -92,13 +93,17 @@ export default function RecordBenefitScreen() {
   // away instead of letting them fill out a form that can never go through.
   const [checkingBalance, setCheckingBalance] = useState(true);
   const [allowanceExhausted, setAllowanceExhausted] = useState(false);
+  const [walletEnded, setWalletEnded] = useState(false); // valid-to day over: "contact HR", not "used up"
 
   useEffect(() => {
     let cancelled = false;
     (async () => {
       try {
         const balance = await api.currentBalance();
-        if (!cancelled && balance.remaining <= 0) setAllowanceExhausted(true);
+        if (!cancelled && balance.remaining <= 0) {
+          setWalletEnded(!!balance.ended);
+          setAllowanceExhausted(true);
+        }
       } catch {
         // Can't check right now (e.g. offline) - don't block them; the
         // normal insufficient_balance handling on submit still applies.
@@ -118,21 +123,37 @@ export default function RecordBenefitScreen() {
   const [codeLoading, setCodeLoading] = useState(false);
   const [codeError, setCodeError] = useState<string | null>(null);
   const [codeCopied, setCodeCopied] = useState(false);
-  // The cashier can reject a payment; while the code is on screen we check for that.
+  // While "Payment in progress" is on screen we check what the cashier did:
+  // accepted -> success tick; rejected -> back to this form, still filled in.
   const [rejected, setRejected] = useState(false);
+  const [accepted, setAccepted] = useState(false);
 
   useEffect(() => {
-    if (!transactionId || rejected) return;
+    if (!transactionId || rejected || accepted) return;
     const timer = setInterval(async () => {
       try {
-        const { status } = await api.transactionStatus(transactionId);
-        if (status === "void") setRejected(true);
+        const s = await api.transactionStatus(transactionId);
+        if (s.status === "void") setRejected(true);
+        else if (s.accepted) setAccepted(true);
       } catch {
         // offline or a blip: try again on the next tick
       }
     }, 2500);
     return () => clearInterval(timer);
-  }, [transactionId, rejected]);
+  }, [transactionId, rejected, accepted]);
+
+  // Rejected: show the same bill again so they can fix it and pay. A fresh
+  // idempotency key, since the old one belongs to the voided payment; the split
+  // is dropped so the balance (refunded by the reject) is checked again.
+  const backToForm = () => {
+    idempotencyKeyRef.current = null;
+    setSplit(null);
+    setTransactionId(null);
+    setCode(null);
+    setCodeError(null);
+    setCodeCopied(false);
+    setRejected(false);
+  };
 
   const onCopyCode = async () => {
     if (!code) return;
@@ -262,7 +283,7 @@ export default function RecordBenefitScreen() {
     <SafeAreaView style={styles.screen}>
       <KeyboardAvoidingView behavior={Platform.OS === "ios" ? "padding" : undefined} style={styles.flex}>
         <View style={styles.header}>
-          <Text style={styles.title}>{transactionId ? "Payment Recorded" : "Add Payment"}</Text>
+          <Text style={styles.title}>{accepted ? "" : transactionId ? "Payment in progress" : "Add Payment"}</Text>
           <Pressable onPress={() => router.back()} style={styles.closeButton}>
             <X size={20} color={colors.textSecondary} />
           </Pressable>
@@ -271,6 +292,13 @@ export default function RecordBenefitScreen() {
         {checkingBalance ? (
           <View style={styles.centerFill}>
             <ActivityIndicator color={colors.goldText} />
+          </View>
+        ) : accepted ? (
+          <View style={styles.centerFill}>
+            <PaymentSuccess
+              amount={formatMoney(split ? split.allowance : total)}
+              detail={[outletName.trim(), `Bill ${billNo}`, split ? `+ ${formatMoney(split.cash)} cash` : ""].filter(Boolean).join(" · ")}
+            />
           </View>
         ) : transactionId ? (
           <ScrollView style={styles.flex} contentContainerStyle={styles.content}>
@@ -301,6 +329,10 @@ export default function RecordBenefitScreen() {
                 <Text style={styles.codeError}>{codeError}</Text>
               )}
             </Card>
+            <View style={styles.waitingRow}>
+              <ActivityIndicator size="small" color={colors.textSecondary} />
+              <Text style={styles.waitingText}>Waiting for the cashier to accept…</Text>
+            </View>
           </ScrollView>
         ) : (
           <ScrollView style={styles.flex} contentContainerStyle={styles.content}>
@@ -450,14 +482,14 @@ export default function RecordBenefitScreen() {
         <ConfirmDialog
           visible={rejected}
           title="Payment Rejected"
-          message="The cashier rejected this payment. Your balance is unchanged. Please make the payment again."
-          actions={[{ label: "OK", onPress: () => router.replace("/(tabs)/home") }]}
+          message="The cashier rejected this payment. Your balance is unchanged. Check the bill details and pay again."
+          actions={[{ label: "OK", onPress: backToForm }]}
         />
 
         <ConfirmDialog
           visible={allowanceExhausted}
-          title="Allowance Used Up"
-          message="Your allowance for this month is over."
+          title={walletEnded ? "No balance detected" : "Allowance Used Up"}
+          message={walletEnded ? "Please contact HR" : "Your allowance for this month is over."}
           actions={[{ label: "OK", onPress: () => router.back() }]}
         />
 
@@ -478,9 +510,10 @@ export default function RecordBenefitScreen() {
           ]}
         />
 
-        {!checkingBalance && !allowanceExhausted && (
+        {/* No button while the payment is in progress: they wait for the cashier (the X still closes). */}
+        {!checkingBalance && !allowanceExhausted && (!transactionId || accepted) && (
           <View style={styles.footer}>
-            {transactionId ? (
+            {accepted ? (
               <PrimaryButton
                 label="Done"
                 loading={closing}
@@ -575,4 +608,6 @@ const styles = StyleSheet.create({
   },
   codeSummary: { ...t.bodyMedium, color: colors.textPrimary, textAlign: "center", marginTop: spacing.xs },
   codeError: { ...t.body, color: colors.danger, textAlign: "center" },
+  waitingRow: { flexDirection: "row", alignItems: "center", justifyContent: "center", gap: spacing.sm },
+  waitingText: { ...t.body, color: colors.textSecondary },
 });

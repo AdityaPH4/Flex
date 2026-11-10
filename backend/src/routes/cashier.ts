@@ -8,6 +8,7 @@ import { OUTLET_NAMES } from "../lib/outlets";
 import { roundMoney } from "../lib/money";
 import { startOfDayIST } from "../lib/istDay";
 import { requireCashier } from "../middleware/cashierAuth";
+import { setLog } from "../lib/eventLog";
 
 // The till-side screen (backend/public/cashier). It shows each bill the moment
 // an employee pays (part of) it from their phone, with every payer's OTP, so the
@@ -88,6 +89,7 @@ cashierRouter.post("/login", (req, res) => {
   }
 
   failedLogins.delete(key);
+  setLog(res, { actor: "cashier" });
   res.json({ token: signCashierToken(), expiresInDays: env.cashierSessionTtlDays });
 });
 
@@ -220,17 +222,24 @@ cashierRouter.get("/payments", requireCashier, async (req, res) => {
 // The cashier turns one payment down (wrong amount, not the employee's bill,
 // ...): the payment is voided and its allowance amount goes back to that
 // month's balance, in one transaction. The employee's app notices on its next
-// status check, shows a message and returns to the home screen; they pay
-// again. Safe to repeat: a second reject of the same payment changes nothing.
+// status check, shows a message and goes back to the form with that bill filled
+// in; they pay again. Safe to repeat: a second reject of the same payment
+// changes nothing. Refused once the bill was accepted.
 cashierRouter.post("/payments/:id/reject", requireCashier, async (req, res) => {
   const id = z.string().trim().min(1).max(64).safeParse(req.params.id);
   if (!id.success) return res.status(400).json({ error: "invalid_id" });
 
   const outcome = await prisma.$transaction(async (tx) => {
-    const t = await tx.benefitTransaction.findUnique({ where: { id: id.data } });
+    const t = await tx.benefitTransaction.findUnique({
+      where: { id: id.data },
+      include: { employee: { select: { employeeCode: true } } },
+    });
     if (!t) return "not_found" as const;
+    setLog(res, { detail: { billNo: t.billNo, amount: Number(t.amount), wallet: t.employee.employeeCode } });
+    // Once accepted, the employee has already seen "Payment successful" - too late to reject.
+    if (t.acceptedAt) return "already_accepted" as const;
     const voided = await tx.benefitTransaction.updateMany({
-      where: { id: t.id, status: "confirmed" },
+      where: { id: t.id, status: "confirmed", acceptedAt: null },
       data: { status: "void", voidedAt: new Date() },
     });
     if (voided.count === 0) return "already_rejected" as const;
@@ -241,7 +250,24 @@ cashierRouter.post("/payments/:id/reject", requireCashier, async (req, res) => {
     return "rejected" as const;
   });
   if (outcome === "not_found") return res.status(404).json({ error: "payment_not_found" });
+  if (outcome === "already_accepted") return res.status(409).json({ error: "already_accepted" });
   res.json({ status: outcome });
+});
+
+// The cashier accepts a whole bill (every payer on the card) after a confirmation
+// on the screen. Each payer's app is polling and turns "Payment in progress" into
+// the success tick. Rejected payments are skipped; safe to repeat.
+const acceptBodySchema = z.object({ ids: z.array(z.string().trim().min(1).max(64)).min(1).max(50) });
+
+cashierRouter.post("/payments/accept", requireCashier, async (req, res) => {
+  const parsed = acceptBodySchema.safeParse(req.body);
+  if (!parsed.success) return res.status(400).json({ error: "invalid_body" });
+  const { count } = await prisma.benefitTransaction.updateMany({
+    where: { id: { in: parsed.data.ids }, status: "confirmed", acceptedAt: null },
+    data: { acceptedAt: new Date() },
+  });
+  setLog(res, { detail: { payments: parsed.data.ids.length, accepted: count } });
+  res.json({ accepted: count });
 });
 
 const transactionsQuerySchema = z.object({

@@ -1,5 +1,6 @@
 import type { Request, Response, NextFunction } from "express";
 import { verifyCashierToken } from "../lib/jwt";
+import { setLog } from "../lib/eventLog";
 
 export function requireCashier(req: Request, res: Response, next: NextFunction) {
   const header = req.headers.authorization ?? "";
@@ -12,5 +13,6 @@ export function requireCashier(req: Request, res: Response, next: NextFunction) 
   } catch {
     return res.status(401).json({ error: "invalid_or_expired_token" });
   }
+  setLog(res, { actor: "cashier" });
   next();
 }

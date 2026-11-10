@@ -8,6 +8,7 @@ import { getOrCreatePeriod } from "../lib/period";
 import { recordBenefitSpend, InsufficientBalanceError, WalletNotValidError, EmployeeInactiveError } from "../lib/spend";
 import { roundMoney } from "../lib/money";
 import { effectiveAllowance, walletEnded } from "../lib/lastDay";
+import { setLog } from "../lib/eventLog";
 import type { Prisma } from "@prisma/client";
 
 type TransactionWithOutlet = Prisma.BenefitTransactionGetPayload<{
@@ -67,6 +68,7 @@ meRouter.get("/benefits/current", async (req: AuthedRequest, res) => {
     remaining: ended ? 0 : Math.max(0, roundMoney(allowance - used)),
     validFrom: day(walletValidFrom),
     validTo,
+    ended, // the app shows "No balance detected / Please contact HR" instead of the wallet
   });
 });
 
@@ -122,13 +124,13 @@ meRouter.get("/benefits/transactions", async (req: AuthedRequest, res) => {
   });
 });
 
-// Is this payment still standing? The app checks while it shows the code, so
-// it can send the employee back home if the cashier rejects it.
+// Where is this payment at the till? The app checks while it shows "Payment in
+// progress": accepted -> success tick; void (rejected) -> back to the filled-in form.
 meRouter.get("/benefits/transactions/:id/status", async (req: AuthedRequest, res) => {
   const t = await prisma.benefitTransaction.findUnique({ where: { id: req.params.id } });
   if (!t || t.employeeId !== req.auth!.employeeId) return res.status(404).json({ error: "transaction_not_found" });
   res.set("Cache-Control", "no-store");
-  res.json({ id: t.id, status: t.status });
+  res.json({ id: t.id, status: t.status, accepted: !!t.acceptedAt });
 });
 
 // 1,000,000 rupees is already far beyond any plausible single purchase at a
@@ -162,6 +164,7 @@ meRouter.post("/benefits/transactions", async (req: AuthedRequest, res) => {
     return res.status(400).json({ error: "invalid_body", details: parsed.error.flatten() });
   }
   const body = parsed.data;
+  setLog(res, { detail: { outlet: body.outletName, billNo: body.billNo, amount: body.amount, cashAmount: body.cashAmount } });
 
   try {
     const txn = await recordBenefitSpend({
@@ -175,6 +178,7 @@ meRouter.post("/benefits/transactions", async (req: AuthedRequest, res) => {
       occurredAt: body.occurredAt ? new Date(body.occurredAt) : new Date(),
       idempotencyKey: body.idempotencyKey,
     });
+    setLog(res, { detail: { transactionId: txn.id } });
     const period = await getOrCreatePeriod(prisma, req.auth!.employeeId, txn.occurredAt);
     const lwd = (await prisma.employee.findUniqueOrThrow({ where: { id: req.auth!.employeeId }, select: { lastWorkingDay: true } })).lastWorkingDay;
     const used = Number(period.used);

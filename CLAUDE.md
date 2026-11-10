@@ -28,7 +28,13 @@ and things to be careful not to break.
   (`POST /api/cashier/payments/:id/reject`): it voids the payment (`status` void,
   `voidedAt`), returns the amount to that month's balance, and the employee's app
   (polling `GET /api/me/benefits/transactions/:id/status` while the code is shown)
-  shows "Payment Rejected" and goes back home to pay again. Shared `CASHIER_PASSWORD` login, like the admin dashboard. The outlet
+  shows "Payment Rejected" and returns to the payment form with that bill's
+  outlet/amount/bill no. still filled in, to pay again (new idempotency key).
+  "Accept payment" asks for confirmation, then `POST /api/cashier/payments/accept`
+  stamps `acceptedAt` on every payer of the bill; each payer's app, showing
+  "Payment in progress" with the OTP, then plays a UPI-style success tick
+  (`mobile/src/components/PaymentSuccess.tsx`). An accepted payment can no
+  longer be rejected (409 `already_accepted`). Shared `CASHIER_PASSWORD` login, like the admin dashboard. The outlet
   list it offers (`backend/src/lib/outlets.ts`) is currently ONLY Indiranagar
   (with one outlet the screen skips the picker); the employee app's `OUTLETS`
   in `mobile/app/record-benefit.tsx` still lists three and must be brought in
@@ -84,8 +90,11 @@ and things to be careful not to break.
    an empty cell clears it). The Employees table only displays it: in the month of that date only
    `day/30` of the allowance is usable (flat 30, capped at 100%), spending
    works through the end of that day (IST) and is refused after it. "Revoke
-   balance" (admin, only for someone with a last working day set) lowers the
-   month's allowance to what was used.
+   balance" (admin, ANY employee - made unconditional at the person's request)
+   lowers the month's allowance to what was used and signs them out of the app
+   on every device (`Session.revokedAt`); they can sign in again and see 0.
+   Once the wallet's valid-to (or last working) day is over, the app's Home
+   shows "No balance detected / Please contact HR" instead of the wallet.
 
 4. **The admin dashboard is for ONE person only: the `ADMIN_EMAIL` env var
    (Pallavi, pallavi@ph4.in).** Google Sign-In (that email only) lets her in

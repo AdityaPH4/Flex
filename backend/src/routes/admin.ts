@@ -6,6 +6,7 @@ import { signAdminToken } from "../lib/jwt";
 import { verifyGoogleIdToken } from "../lib/googleAuth";
 import { hashPassword, verifyPassword } from "../lib/adminPassword";
 import { requireAdmin } from "../middleware/adminAuth";
+import { EVENT_LOG_DAYS, setLog } from "../lib/eventLog";
 import { getOrCreatePeriod, listCurrentBalancesForActiveEmployees } from "../lib/period";
 import { effectiveAllowance } from "../lib/lastDay";
 import { roundMoney } from "../lib/money";
@@ -54,6 +55,7 @@ adminRouter.post("/login", async (req, res) => {
   }
   lock.count = 0;
   lock.lockedUntil = 0;
+  setLog(res, { actor: "admin" });
   res.json({ token: signAdminToken(), expiresInHours: env.adminSessionTtlHours });
 });
 
@@ -74,6 +76,7 @@ adminRouter.post("/google", async (req, res) => {
   lock.count = 0;
   lock.lockedUntil = 0;
   const cred = await prisma.adminCredential.findUnique({ where: { email } });
+  setLog(res, { actor: "admin" });
   res.json({ token: signAdminToken(), expiresInHours: env.adminSessionTtlHours, passwordSet: !!cred });
 });
 
@@ -136,21 +139,76 @@ adminRouter.post("/test/update-balance", async (req, res) => {
   res.json({ updated: results.length, results });
 });
 
-// Takes back whatever is left of this month's balance for someone who is
-// leaving: the period's allowance is lowered to exactly what they've used, so
-// remaining becomes 0. Only for an employee already marked as leaving (a last
-// working day came in with the roster upload) - it can't be pointed at an ordinary employee by mistake.
+// Takes back whatever is left of this month's balance (the period's allowance
+// is lowered to exactly what they've used, so remaining becomes 0) and signs the
+// employee out of the app on every device. Any employee - the admin decides.
+// They can sign in again, but see ₹0 until next month's allowance starts.
 // Not reversible from here (restoring is a manual top-up), by design.
 adminRouter.post("/employees/:employeeCode/revoke-balance", async (req, res) => {
   const employee = await prisma.employee.findUnique({ where: { employeeCode: req.params.employeeCode } });
   if (!employee) return res.status(404).json({ error: "employee_not_found" });
-  if (!employee.lastWorkingDay) return res.status(409).json({ error: "set_last_working_day_first" });
 
   const period = await getOrCreatePeriod(prisma, employee.id);
   const revoked = roundMoney(Math.max(0, effectiveAllowance(Number(period.allowance), employee.lastWorkingDay, period.year, period.month) - Number(period.used)));
-  await prisma.benefitPeriod.update({ where: { id: period.id }, data: { allowance: period.used } });
-  console.log(`[admin] revoked balance of ${revoked} for ${employee.employeeCode} (${period.year}-${period.month})`);
-  res.json({ employeeCode: employee.employeeCode, revoked, remaining: 0 });
+  const [, sessions] = await prisma.$transaction([
+    prisma.benefitPeriod.update({ where: { id: period.id }, data: { allowance: period.used } }),
+    prisma.session.updateMany({ where: { employeeId: employee.id, revokedAt: null }, data: { revokedAt: new Date() } }),
+  ]);
+  console.log(`[admin] revoked balance of ${revoked} for ${employee.employeeCode} (${period.year}-${period.month}), signed out ${sessions.count} session(s)`);
+  setLog(res, { detail: { revoked, signedOut: sessions.count } });
+  res.json({ employeeCode: employee.employeeCode, revoked, remaining: 0, signedOut: sessions.count });
+});
+
+// The activity log (lib/eventLog.ts), newest first, never older than EVENT_LOG_DAYS.
+// employeeCode narrows it to what that employee did; event matches part of the event name.
+const eventsQuerySchema = z.object({
+  employeeCode: z.string().trim().min(1).max(64).optional(),
+  event: z.string().trim().min(1).max(100).optional(),
+  days: z.coerce.number().int().min(1).max(EVENT_LOG_DAYS).default(EVENT_LOG_DAYS),
+  limit: z.coerce.number().int().min(1).max(500).default(200),
+  cursor: z.string().uuid().optional(),
+});
+
+adminRouter.get("/events", async (req, res) => {
+  const parsed = eventsQuerySchema.safeParse(req.query);
+  if (!parsed.success) return res.status(400).json({ error: "invalid_query" });
+  const { employeeCode, event, days, limit, cursor } = parsed.data;
+
+  const employee = employeeCode ? await prisma.employee.findUnique({ where: { employeeCode } }) : null;
+  if (employeeCode && !employee) return res.json({ events: [], nextCursor: null });
+
+  const rows = await prisma.eventLog.findMany({
+    where: {
+      at: { gte: new Date(Date.now() - days * 24 * 60 * 60 * 1000) },
+      ...(employee ? { employeeId: employee.id } : {}),
+      ...(event ? { event: { contains: event, mode: "insensitive" } } : {}),
+    },
+    orderBy: [{ at: "desc" }, { id: "desc" }],
+    take: limit + 1,
+    ...(cursor ? { cursor: { id: cursor }, skip: 1 } : {}),
+  });
+  const hasMore = rows.length > limit;
+  const page = hasMore ? rows.slice(0, limit) : rows;
+
+  const ids = [...new Set(page.map((r) => r.employeeId).filter((id): id is string => !!id))];
+  const people = await prisma.employee.findMany({ where: { id: { in: ids } }, select: { id: true, employeeCode: true, name: true } });
+  const byId = new Map(people.map((p) => [p.id, p]));
+
+  res.json({
+    events: page.map((r) => ({
+      id: r.id,
+      at: r.at,
+      actor: r.actor,
+      employeeCode: byId.get(r.employeeId ?? "")?.employeeCode ?? null,
+      employeeName: byId.get(r.employeeId ?? "")?.name ?? null,
+      event: r.event,
+      status: r.status,
+      error: r.error,
+      detail: r.detail,
+      ip: r.ip,
+    })),
+    nextCursor: hasMore ? page[page.length - 1].id : null,
+  });
 });
 
 // Persistent "this month's roster changes" - unlike the joiners/leavers echoed
@@ -524,6 +582,7 @@ adminRouter.post("/employees/import", async (req, res) => {
     updated: results.filter((r) => r.status === "updated").length,
     errors: results.filter((r) => r.status === "error").length,
   };
+  setLog(res, { detail: { ...summary, leavers: leavers.length } });
   res.json({ results, summary, leavers });
 });
 

@@ -132,90 +132,103 @@ export default function HomeScreen() {
           <OfflineBanner message="Couldn't reach the server. Pull down to try again." />
         )}
 
-        <Card tone="gold" style={styles.heroCard}>
-          <Text style={styles.heroLabel}>Remaining this month</Text>
-          <Text style={styles.heroNumber}>
-            {balance ? formatMoney(balance.remaining) : "—"}
-          </Text>
-        </Card>
-
-        <View style={styles.statsRow}>
-          <Card tone="sage" style={styles.statCard}>
-            <View style={styles.statIconRow}>
-              <Wallet size={18} color={colors.sageText} />
+        {balance?.ended ? (
+          // Valid-to (or last working) day is over: no wallet to show, only who to ask.
+          <Card style={styles.endedCard}>
+            <View style={styles.endedIcon}>
+              <Wallet size={28} color={colors.textMuted} />
             </View>
-            <Text style={styles.statValue}>
-              {balance ? formatMoney(balance.allowance) : "—"}
-            </Text>
-            <Text style={styles.statLabel}>Monthly allowance</Text>
+            <Text style={styles.endedTitle}>No balance detected</Text>
+            <Text style={styles.endedText}>Please contact HR</Text>
           </Card>
-          <Card tone="neutral" style={styles.statCard}>
-            <View style={styles.statIconRow}>
-              <TrendingDown size={18} color={colors.textSecondary} />
-            </View>
-            <Text style={styles.statValue}>
-              {balance ? formatMoney(balance.used) : "—"}
+        ) : (
+          <>
+          <Card tone="gold" style={styles.heroCard}>
+            <Text style={styles.heroLabel}>Remaining this month</Text>
+            <Text style={styles.heroNumber}>
+              {balance ? formatMoney(balance.remaining) : "—"}
             </Text>
-            <Text style={styles.statLabel}>Used</Text>
           </Card>
-        </View>
 
-        <View style={styles.quickActionsRow}>
-          <View style={styles.quickActions}>
-            <QuickAction
-              icon={ReceiptText}
-              label="Add Payment"
-              tone="gold"
-              onPress={() => router.push("/record-benefit")}
-            />
-            <QuickAction icon={HistoryIcon} label="History" tone="sage" onPress={() => router.push("/(tabs)/history")} />
+          <View style={styles.statsRow}>
+            <Card tone="sage" style={styles.statCard}>
+              <View style={styles.statIconRow}>
+                <Wallet size={18} color={colors.sageText} />
+              </View>
+              <Text style={styles.statValue}>
+                {balance ? formatMoney(balance.allowance) : "—"}
+              </Text>
+              <Text style={styles.statLabel}>Monthly allowance</Text>
+            </Card>
+            <Card tone="neutral" style={styles.statCard}>
+              <View style={styles.statIconRow}>
+                <TrendingDown size={18} color={colors.textSecondary} />
+              </View>
+              <Text style={styles.statValue}>
+                {balance ? formatMoney(balance.used) : "—"}
+              </Text>
+              <Text style={styles.statLabel}>Used</Text>
+            </Card>
           </View>
-          <Card tone="neutral" style={styles.validityCard}>
-            <View style={styles.validityHead}>
-              <CalendarClock size={16} color={colors.goldText} />
-              <Text style={styles.validityTitle}>Validity</Text>
+
+          <View style={styles.quickActionsRow}>
+            <View style={styles.quickActions}>
+              <QuickAction
+                icon={ReceiptText}
+                label="Add Payment"
+                tone="gold"
+                onPress={() => router.push("/record-benefit")}
+              />
+              <QuickAction icon={HistoryIcon} label="History" tone="sage" onPress={() => router.push("/(tabs)/history")} />
             </View>
-            {balance && (balance.validFrom || balance.validTo) ? (
-              <>
-                <Text style={styles.validityLine}>
-                  <Text style={styles.validityKey}>From </Text>
-                  {balance.validFrom ? formatDay(balance.validFrom) : "—"}
-                </Text>
-                <Text style={styles.validityLine}>
-                  <Text style={styles.validityKey}>To </Text>
-                  {balance.validTo ? formatDay(balance.validTo) : "No end date"}
-                </Text>
-              </>
+            <Card tone="neutral" style={styles.validityCard}>
+              <View style={styles.validityHead}>
+                <CalendarClock size={16} color={colors.goldText} />
+                <Text style={styles.validityTitle}>Validity</Text>
+              </View>
+              {balance && (balance.validFrom || balance.validTo) ? (
+                <>
+                  <Text style={styles.validityLine}>
+                    <Text style={styles.validityKey}>From </Text>
+                    {balance.validFrom ? formatDay(balance.validFrom) : "—"}
+                  </Text>
+                  <Text style={styles.validityLine}>
+                    <Text style={styles.validityKey}>To </Text>
+                    {balance.validTo ? formatDay(balance.validTo) : "No end date"}
+                  </Text>
+                </>
+              ) : (
+                <Text style={styles.validityLine}>{balance ? "No time limit" : "—"}</Text>
+              )}
+            </Card>
+          </View>
+
+          <View style={styles.sectionHeader}>
+            <Text style={styles.sectionTitle}>Recent Transactions</Text>
+            <Text style={styles.sectionLink} onPress={() => router.push("/(tabs)/history")}>
+              View All
+            </Text>
+          </View>
+
+          <Card>
+            {recent.length === 0 ? (
+              <Text style={styles.emptyText}>No transactions yet this month.</Text>
             ) : (
-              <Text style={styles.validityLine}>{balance ? "No time limit" : "—"}</Text>
+              recent.map((txn, i) => (
+                <View key={txn.id}>
+                  <TransactionRow
+                    transaction={txn}
+                    onPress={() =>
+                      router.push({ pathname: "/transaction-detail", params: { transaction: JSON.stringify(txn) } })
+                    }
+                  />
+                  {i < recent.length - 1 && <View style={styles.rowDivider} />}
+                </View>
+              ))
             )}
           </Card>
-        </View>
-
-        <View style={styles.sectionHeader}>
-          <Text style={styles.sectionTitle}>Recent Transactions</Text>
-          <Text style={styles.sectionLink} onPress={() => router.push("/(tabs)/history")}>
-            View All
-          </Text>
-        </View>
-
-        <Card>
-          {recent.length === 0 ? (
-            <Text style={styles.emptyText}>No transactions yet this month.</Text>
-          ) : (
-            recent.map((txn, i) => (
-              <View key={txn.id}>
-                <TransactionRow
-                  transaction={txn}
-                  onPress={() =>
-                    router.push({ pathname: "/transaction-detail", params: { transaction: JSON.stringify(txn) } })
-                  }
-                />
-                {i < recent.length - 1 && <View style={styles.rowDivider} />}
-              </View>
-            ))
-          )}
-        </Card>
+          </>
+        )}
       </ScrollView>
 
       <ConfirmDialog
@@ -276,4 +289,16 @@ const styles = StyleSheet.create({
   sectionLink: { ...t.caption, color: colors.goldText },
   emptyText: { ...t.body, color: colors.textMuted },
   rowDivider: { height: 1, backgroundColor: colors.surfaceBorder },
+  endedCard: { alignItems: "center", gap: spacing.sm, paddingVertical: spacing.xxxl, marginTop: spacing.xxl },
+  endedIcon: {
+    width: 56,
+    height: 56,
+    borderRadius: radii.pill,
+    backgroundColor: colors.bg,
+    alignItems: "center",
+    justifyContent: "center",
+    marginBottom: spacing.sm,
+  },
+  endedTitle: { ...t.h1, color: colors.textPrimary, textAlign: "center" },
+  endedText: { ...t.body, color: colors.textSecondary, textAlign: "center" },
 });

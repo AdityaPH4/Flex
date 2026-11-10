@@ -17,6 +17,7 @@ export interface CurrentBalance {
   remaining: number;
   validFrom: string | null; // YYYY-MM-DD; null = no limit on that side
   validTo: string | null;
+  ended?: boolean; // valid-to (or last working) day is over; optional so an older server still works
 }
 
 export interface Transaction {
