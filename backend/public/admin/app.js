@@ -455,13 +455,23 @@ function renderRevoke() {
     btn.type = "button";
     btn.className = "danger-button";
     btn.textContent = "Revoke balance";
+    // Revoked this month and nothing given back since (a re-import can restore it).
+    if (e.revokedAt && e.remaining === 0) {
+      tr.className = "revoked-row";
+      btn.className = "danger-button revoked";
+      btn.textContent = "Balance revoked";
+      btn.disabled = true;
+      tr.lastElementChild.append(btn);
+      body.appendChild(tr);
+      continue;
+    }
     btn.addEventListener("click", async () => {
       const facts = [["Employee", `${e.name} (${e.employeeCode})`]];
       if (e.lastWorkingDay) facts.push(["Last working day", dateOnly(e.lastWorkingDay)]);
       facts.push(["Amount revoked", money(e.remaining)]);
       const go = await showDialog({
         title: "Revoke balance?",
-        message: "Their remaining balance for this month becomes ₹0.00 and they are signed out of the app. This can't be undone from here.",
+        message: "Their remaining balance for this month becomes ₹0.00 and they are signed out of the app and can't sign in again this month.",
         facts,
         confirmLabel: "Revoke balance",
         danger: true,
@@ -471,6 +481,7 @@ function renderRevoke() {
       try {
         await api(`/employees/${encodeURIComponent(e.employeeCode)}/revoke-balance`, { method: "POST" });
         await loadEmployees();
+        loadRosterChanges();
       } catch (err) {
         if (err.message !== "unauthorized") await showDialog({ title: "Couldn't revoke the balance", message: "Something went wrong. Nothing was changed. Try again.", confirmLabel: "OK", cancelLabel: null });
       }
@@ -671,6 +682,40 @@ function renderRosterChanges(data) {
     const tr = document.createElement("tr");
     tr.innerHTML = `<td>${escapeHtml(l.employeeCode)}</td><td>${escapeHtml(l.name)}</td>`;
     leaversBody.appendChild(tr);
+  }
+
+  const revoked = data.revoked || [];
+  const revokedBody = document.getElementById("revoked-body");
+  document.getElementById("revoked-empty").classList.toggle("hidden", revoked.length > 0);
+  revokedBody.innerHTML = "";
+  for (const r of revoked) {
+    const tr = document.createElement("tr");
+    const when = new Date(r.revokedAt).toLocaleString("en-IN", { day: "numeric", month: "short", hour: "numeric", minute: "2-digit" });
+    tr.innerHTML = `<td>${escapeHtml(r.employeeCode)}</td><td>${escapeHtml(r.name)}</td><td>${escapeHtml(when)}</td><td></td>`;
+    const undo = document.createElement("button");
+    undo.type = "button";
+    undo.className = "secondary-button";
+    undo.textContent = "Undo revoke";
+    undo.addEventListener("click", async () => {
+      const go = await showDialog({
+        title: "Undo revoke?",
+        message: "Their balance for this month goes back to what it was before the revoke, and they can sign in to the app again.",
+        facts: [["Employee", `${r.name} (${r.employeeCode})`], ["Revoked on", when]],
+        confirmLabel: "Undo revoke",
+      });
+      if (!go) return;
+      undo.disabled = true;
+      try {
+        await api(`/employees/${encodeURIComponent(r.employeeCode)}/undo-revoke`, { method: "POST" });
+        await loadEmployees();
+        await loadRosterChanges();
+      } catch (err) {
+        undo.disabled = false;
+        if (err.message !== "unauthorized") await showDialog({ title: "Couldn't undo the revoke", message: "Something went wrong. Nothing was changed. Try again.", confirmLabel: "OK", cancelLabel: null });
+      }
+    });
+    tr.lastElementChild.append(undo);
+    revokedBody.appendChild(tr);
   }
 }
 

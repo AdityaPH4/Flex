@@ -30,11 +30,20 @@ authRouter.post("/google/verify", async (req, res) => {
   }
 
   const employee = await prisma.employee.findUnique({ where: { email } });
-  if (!employee || !employee.active) {
+  // Balance revoked this month and not given back since (e.g. by a re-import):
+  // refused exactly like an unknown email. Next month's fresh allowance lets them in.
+  const now = new Date();
+  const period = employee
+    ? await prisma.benefitPeriod.findUnique({
+        where: { employeeId_year_month: { employeeId: employee.id, year: now.getFullYear(), month: now.getMonth() + 1 } },
+      })
+    : null;
+  const revoked = !!period?.revokedAt && Number(period.allowance) <= Number(period.used);
+  if (!employee || !employee.active || revoked) {
     // Internal employee-only system: it's fine to say plainly that the
     // Google account isn't registered (an HR/admin-provisioning flow, not
     // public signup).
-    setLog(res, { detail: { email } });
+    setLog(res, { detail: revoked ? { email, revoked: true } : { email } });
     return res.status(404).json({ error: "google_account_not_registered" });
   }
 

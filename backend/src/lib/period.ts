@@ -71,6 +71,7 @@ export interface EmployeeCurrentBalance {
   allowance: number; // already prorated when lastWorkingDay falls in this month
   used: number;
   remaining: number;
+  revokedAt: Date | null; // admin revoked this month's balance
 }
 
 /**
@@ -128,6 +129,7 @@ export async function listCurrentBalancesForActiveEmployees(
       allowance,
       used,
       remaining: walletEnded(employee.walletValidTo, employee.lastWorkingDay) ? 0 : Math.max(0, roundMoney(allowance - used)),
+      revokedAt: period?.revokedAt ?? null,
     };
   });
 }

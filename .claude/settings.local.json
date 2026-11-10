@@ -3,5 +3,19 @@
     "allow": [
       "Bash(ipconfig getifaddr *)"
     ]
+  },
+  "hooks": {
+    "PostToolUse": [
+      {
+        "matcher": "Edit|Write|MultiEdit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "jq -r '.tool_input.file_path // empty' | grep -q 'backend/prisma/schema.prisma$' && jq -n --arg ev PostToolUse --arg msg 'backend/prisma/schema.prisma was just edited. Before you finish this task, sync the Database Schema section of the TREAT scope doc (Claude Docs doc id 29e66355-62c9-4902-b872-8e48cdfdaea4, viewer https://claude.ai/artifact/6B6HXskFL9FpN5AA591e43): re-read the schema file and the doc, update only the tables whose fields, types, notes or For: line changed, add or remove a table when a model was added or removed, and redraw the ER diagram only when tables or links changed. Use the mcp__claude_ai_Claude_Docs__* tools (load them with ToolSearch). If they are unavailable, tell the user the doc is out of date. When done, say in one line that the doc was updated.' '{hookSpecificOutput:{hookEventName:$ev,additionalContext:$msg}}' || true",
+            "timeout": 10
+          }
+        ]
+      }
+    ]
   }
 }

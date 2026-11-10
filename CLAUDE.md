@@ -24,13 +24,13 @@ and things to be careful not to break.
   amounts and type the OTPs into Digitory. Two
   tabs: a "Live payments" board (2x2, growing to 3x2/3x3/4x3 as bills arrive so nothing scrolls up to 12) that keeps each bill for 10 minutes, and
   "All Transactions" (today, IST day, searchable by name/employee code/bill
-  no). Digitory is still updated by hand, but each payer has a "Reject payment" button
+  no). Digitory is still updated by hand, but each payer has a "Reject" button
   (`POST /api/cashier/payments/:id/reject`): it voids the payment (`status` void,
   `voidedAt`), returns the amount to that month's balance, and the employee's app
   (polling `GET /api/me/benefits/transactions/:id/status` while the code is shown)
   shows "Payment Rejected" and returns to the payment form with that bill's
   outlet/amount/bill no. still filled in, to pay again (new idempotency key).
-  "Accept payment" asks for confirmation, then `POST /api/cashier/payments/accept`
+  "Accept" asks for confirmation, then `POST /api/cashier/payments/accept`
   stamps `acceptedAt` on every payer of the bill; each payer's app, showing
   "Payment in progress" with the OTP, then plays a UPI-style success tick
   (`mobile/src/components/PaymentSuccess.tsx`). An accepted payment can no
@@ -39,7 +39,10 @@ and things to be careful not to break.
   (with one outlet the screen skips the picker); the employee app's `OUTLETS`
   in `mobile/app/record-benefit.tsx` still lists three and must be brought in
   line when outlets change. The page is installable (`manifest.webmanifest`,
-  "Add to Home screen" at `/cashier/`).
+  "Add to Home screen" at `/cashier/`). It reloads itself within a minute of
+  a deploy (compares its own files' ETags; not while a Reject/Accept
+  confirmation is open) - a till screen left open on old code once made
+  "Accept" silently never reach the server (2026-11-10).
 
 ## Non-obvious decisions — don't relitigate these without asking the person first
 
@@ -92,7 +95,7 @@ and things to be careful not to break.
    works through the end of that day (IST) and is refused after it. "Revoke
    balance" (admin, ANY employee - made unconditional at the person's request)
    lowers the month's allowance to what was used and signs them out of the app
-   on every device (`Session.revokedAt`); they can sign in again and see 0.
+   on every device (`Session.revokedAt`), and stamps `BenefitPeriod.revokedAt`. Google sign-in then answers exactly like an unknown email (`google_account_not_registered`, `backend/src/routes/auth.ts`) for the rest of that month, unless the balance is given back (the admin's "Undo revoke" on the Employees tab's Revoked Balance table, `POST /employees/:code/undo-revoke`, which restores `allowanceBeforeRevoke`; or a re-import raising the allowance above used) - changed 2026-11-10 at the person's request; it used to let them sign in and see 0.
    Once the wallet's valid-to (or last working) day is over, the app's Home
    shows "No balance detected / Please contact HR" instead of the wallet.
 

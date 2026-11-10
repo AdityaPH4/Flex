@@ -61,7 +61,12 @@ function cleanAmountInput(raw: string): string {
 
 export default function RecordBenefitScreen() {
   const router = useRouter();
-  const { logout } = useAuth();
+  const { logout, isAuthenticated, isBootstrapping } = useAuth();
+  // This screen sits above the tabs, whose own sign-in check can't move it: once
+  // signed out here (session revoked/expired), go to the login screen ourselves.
+  useEffect(() => {
+    if (!isBootstrapping && !isAuthenticated) router.replace("/login");
+  }, [isBootstrapping, isAuthenticated, router]);
   // Generated lazily on first submit attempt and REUSED across retries of
   // the same logical payment (e.g. a dropped connection, or the insufficient-
   // balance -> split-payment retry flow) - this is what makes the backend's
@@ -135,12 +140,15 @@ export default function RecordBenefitScreen() {
         const s = await api.transactionStatus(transactionId);
         if (s.status === "void") setRejected(true);
         else if (s.accepted) setAccepted(true);
-      } catch {
-        // offline or a blip: try again on the next tick
+      } catch (err) {
+        // Session ended meanwhile (revoked, expired, deactivated): no check can
+        // succeed any more, so sign out instead of "Waiting..." forever.
+        if (err instanceof ApiError && err.status === 401) logout();
+        // anything else = offline or a blip: try again on the next tick
       }
     }, 2500);
     return () => clearInterval(timer);
-  }, [transactionId, rejected, accepted]);
+  }, [transactionId, rejected, accepted, logout]);
 
   // Rejected: show the same bill again so they can fix it and pay. A fresh
   // idempotency key, since the old one belongs to the voided payment; the split

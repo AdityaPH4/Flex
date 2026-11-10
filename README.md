@@ -331,7 +331,7 @@ that outlet appear, on both tabs below.
   scrolls until there are more than 12. One bill number at one outlet is one card, however
   many employees paid it, each payer listed with their own OTP (a long list
   scrolls inside the card). A bill stays for **10 minutes** from its latest
-  payment and then drops off by itself; "Accept payment" (after a confirmation) clears a card sooner (and it
+  payment and then drops off by itself; "Accept" (after a confirmation) clears a card sooner on every cashier screen (and it
   comes back if someone else then pays that bill). The length is
   `LIVE_WINDOW_MS` in `backend/src/routes/cashier.ts` (the screen reads it
   from the `windowSeconds` field of the feed). The screen asks
@@ -352,7 +352,7 @@ that outlet appear, on both tabs below.
 a tap - a banner says so after a reload), keeps the screen awake, shows
 "Reconnecting..." and recovers by itself if the connection drops, and
 remembers which cards were cleared (hiding the card is stored on that device
-only). "Accept payment" asks for confirmation, then also tells the server
+only). "Accept" asks for confirmation, then also tells the server
 (`acceptedAt` on every payer of the bill): each payer's app switches from
 "Payment in progress" to a success tick, and the payment can no longer be
 rejected. A rejected payment sends the employee's app back to the payment form
@@ -376,7 +376,8 @@ Source: `backend/src/routes/cashier.ts` (API) and `backend/public/cashier/`
 | POST | `/api/admin/login` | - | Admin login (shared password) |
 | GET | `/api/admin/overview` | admin | Aggregate stats across all employees |
 | GET | `/api/admin/employees` | admin | Every active employee's current balance (allowance already prorated for someone leaving this month) |
-| POST | `/api/admin/employees/:employeeCode/revoke-balance` | admin | Take back any employee's remaining balance for this month and sign them out of the app on every device |
+| POST | `/api/admin/employees/:employeeCode/revoke-balance` | admin | Take back any employee's remaining balance for this month and sign them out of the app on every device; Google sign-in is then refused like an unknown email for the rest of the month (stamps `BenefitPeriod.revokedAt`; listed under "Revoked Balance This Month" on the Employees tab, served with joiners/leavers by `GET /api/admin/employees/roster-changes`) |
+| POST | `/api/admin/employees/:employeeCode/undo-revoke` | admin | "Undo revoke" on the Revoked Balance table: this month's allowance goes back to `BenefitPeriod.allowanceBeforeRevoke` (saved by the revoke; older revokes fall back to the role's allowance, never below used), `revokedAt` is cleared and Google sign-in works again. 409 `not_revoked` otherwise |
 | GET | `/api/admin/transactions` | admin | Every benefit transaction, paginated |
 | GET | `/api/admin/reconciliation-codes` | admin | Every OTP generated, paginated |
 | POST | `/api/me/benefits/reconciliation-code` | employee | Generate the 6-digit OTP for a recorded payment |

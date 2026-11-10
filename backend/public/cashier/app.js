@@ -13,13 +13,13 @@
  *   - Live payments: a board of the bills paid in the last 10 minutes, 2x2 and
  *     growing to 3x2, 3x3, 4x3 as more arrive so everything stays in view (the
  *     server sends the exact length as windowSeconds; it runs from a bill's
- *     latest payer). Older ones drop off by themselves; "Accept payment" clears one
+ *     latest payer). Older ones drop off by themselves; "Accept" clears one
  *     early, and it comes back if someone else then pays the same bill.
  *   - All Transactions: every payment recorded today (the IST calendar day),
  *     one row per employee payment with its OTP, searchable by name, employee code or bill number.
  *
- * Two actions change a payment: "Reject payment" voids one payer, and "Accept
- * payment" (after a confirmation) marks the whole bill accepted so each payer's
+ * Two actions change a payment: "Reject" voids one payer, and "Accept"
+ * (after a confirmation) marks the whole bill accepted so each payer's
  * phone shows the success tick. The card is then hidden on this device
  * (remembered in localStorage). Nothing here verifies an OTP.
  */
@@ -30,7 +30,6 @@
   const KEYS = {
     token: "toit.cashier.token",
     outlet: "toit.cashier.outlet",
-    seen: "toit.cashier.seen",
     sound: "toit.cashier.sound",
   };
   const ALL = "__all__"; // outlet value meaning "every outlet"
@@ -49,7 +48,6 @@
   // After a payment leaves the board it is remembered this much longer, so a
   // straggling poll can't bring it back (and beep for it) at the boundary.
   const REMEMBER_AFTER_EXPIRY_MS = 2 * 60 * 1000;
-  const SEEN_CAP = 500;
   const TICK_MS = 1000;
   const TIME_REFRESH_MS = 20 * 1000;
   const TX_REFRESH_MS = 15 * 1000;
@@ -71,15 +69,6 @@
     },
   };
 
-  function loadSeen() {
-    try {
-      const ids = JSON.parse(store.get(KEYS.seen) || "[]");
-      return new Set(Array.isArray(ids) ? ids : []);
-    } catch {
-      return new Set();
-    }
-  }
-
   const state = {
     token: store.get(KEYS.token),
     outlet: store.get(KEYS.outlet), // null until picked, else a name or ALL
@@ -89,7 +78,6 @@
 
     // live board
     payments: new Map(), // id -> payment
-    seen: loadSeen(), // ids the cashier has tapped "Accept payment" on
     windowMs: DEFAULT_WINDOW_MS,
     cursorMs: 0, // server time of the last successful poll
     skewMs: 0, // server clock minus this device's clock
@@ -232,7 +220,7 @@
   // The banner takes up room, so hiding it moves everything below it. The tap
   // that unlocks the audio is also the tap that hides the banner - if that
   // happened while the finger was still down, the card would slide away from
-  // under it and the tap (say, on "Accept payment") would be lost. So while a pointer
+  // under it and the tap (say, on "Accept") would be lost. So while a pointer
   // is down the banner is left as it is, and settled once the pointer is up.
   let pointerDown = false;
   function updateSoundBanner() {
@@ -254,13 +242,14 @@
 
   // A bill's card is rebuilt when this changes: another payer, a new total, or an
   // OTP arriving (it exists a moment after the payment itself).
-  const billSig = (b) => b.payments.length + "|" + b.totalAmount + "|" + b.payments.filter((p) => p.code).length;
+  const billSig = (b) =>
+    b.payments.length + "|" + b.totalAmount + "|" + b.payments.filter((p) => p.code).length + "|" + b.payments.filter((p) => p.accepted).length;
   const isFresh = (b) => nowMs() - b.lastMs < FRESH_MS;
-  // Cleared per head-count: if another person pays the same bill afterwards the
-  // bill is a different "state" and comes back onto the board.
-  const seenKey = (b) => b.id + "#" + b.payments.length;
-  // On the board = a payer in the last window and not cleared with "Accept payment".
-  const onBoard = (b) => !state.seen.has(seenKey(b)) && nowMs() - b.lastMs < state.windowMs;
+  // Accepted on ANY cashier screen (the server says so). If another person pays
+  // the same bill afterwards, that new payer isn't accepted and the bill comes back.
+  const accepted = (b) => b.payments.every((p) => p.accepted);
+  // On the board = a payer in the last window and not accepted yet.
+  const onBoard = (b) => !accepted(b) && nowMs() - b.lastMs < state.windowMs;
 
   function buildAlert(b) {
     const card = el("article", "alert" + (isFresh(b) ? " fresh" : "") + (b.cashAmount > 0 ? "" : " no-split"));
@@ -307,11 +296,11 @@
     }
 
     const foot = el("div", "foot");
-    const reject = el("button", "btn danger", "Reject payment");
+    const reject = el("button", "btn danger", "Reject");
     reject.type = "button";
     reject.addEventListener("click", () => askReject(b));
     foot.append(reject);
-    const button = el("button", "btn primary", "Accept payment");
+    const button = el("button", "btn primary", "Accept");
     button.type = "button";
     button.addEventListener("click", () => askAccept(b));
     foot.append(button);
@@ -474,7 +463,9 @@
       return;
     }
     closeReject();
-    acknowledge(b);
+    // Hide it now; the next poll brings the same news from the server.
+    b.payments.forEach((p) => (p.accepted = true));
+    renderLive();
   }
 
   async function doReject(b, p, button) {
@@ -509,12 +500,6 @@
     if (state.tab === "all") loadTransactions();
   }
 
-  function acknowledge(b) {
-    state.seen.add(seenKey(b));
-    store.set(KEYS.seen, JSON.stringify([...state.seen].slice(-SEEN_CAP)));
-    renderLive();
-  }
-
   // ---------- the live feed ----------
 
   function mergePayments(list, serverMs) {
@@ -537,7 +522,7 @@
       // Only a new payer or total is news; an OTP arriving just fills in the card.
       if (prev && prev.payments.length === b.payments.length && prev.totalAmount === b.totalAmount) continue;
 
-      if (state.seen.has(seenKey(b))) continue; // cleared earlier, e.g. before a reload
+      if (accepted(b)) continue; // accepted already (here or on another screen)
       // A freshly opened screen shows what is still on the board but only
       // announces what is genuinely new.
       if (state.firstLoadDone || serverMs - b.lastMs < FRESH_MS) fresh.push(b);
@@ -979,6 +964,27 @@
 
   setInterval(tick, TICK_MS);
   setInterval(refreshTimes, TIME_REFRESH_MS);
+
+  // A till screen stays open for days and would keep running the code it opened
+  // with, missing every release. Once a minute: if this page's files changed on
+  // the server, reload - but never in the middle of a Reject/Accept confirmation.
+  const PAGE_FILES = ["/cashier/index.html", "/cashier/app.js", "/cashier/styles.css"];
+  let pageVersion = null;
+  async function reloadIfNewVersion() {
+    try {
+      const tags = await Promise.all(
+        PAGE_FILES.map((f) =>
+          fetch(f, { method: "HEAD", cache: "no-store" }).then((r) => (r.ok ? r.headers.get("etag") || r.headers.get("last-modified") : null))
+        )
+      );
+      if (tags.some((t) => !t)) return; // odd answer: try again next time
+      const version = tags.join("|");
+      if (pageVersion === null) pageVersion = version;
+      else if (version !== pageVersion && rejectDialog().classList.contains("hidden")) location.reload();
+    } catch { /* offline: try again next time */ }
+  }
+  reloadIfNewVersion();
+  setInterval(reloadIfNewVersion, 60 * 1000);
 
   // ---------- start ----------
 

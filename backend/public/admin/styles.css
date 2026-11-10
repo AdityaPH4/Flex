@@ -456,6 +456,8 @@ tbody tr:not(:last-child) td { border-bottom: 1px solid var(--card-border); }
 }
 .danger-button:hover:not(:disabled) { background: var(--danger-soft); }
 .danger-button:disabled { opacity: 0.4; cursor: default; }
+.danger-button.revoked:disabled { opacity: 1; background: var(--danger); color: #fff; }
+#revoke-body tr.revoked-row td { opacity: 0.5; }
 
 /* ---------------- Responsive ---------------- */
 

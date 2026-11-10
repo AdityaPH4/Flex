@@ -110,6 +110,8 @@ model BenefitPeriod {
 
   allowance Decimal @db.Decimal(10, 2) // snapshotted from Role.monthlyAllowance at period-creation time
   used      Decimal @db.Decimal(10, 2) @default(0)
+  revokedAt DateTime? // admin "Revoke balance" (latest time); listed on the Employees tab
+  allowanceBeforeRevoke Decimal? @db.Decimal(10, 2) // what "Undo revoke" puts back
 
   transactions BenefitTransaction[]
 

@@ -133,8 +133,8 @@ cashierRouter.get("/payments", requireCashier, async (req, res) => {
   const from = since && new Date(since) > windowStart ? new Date(since) : windowStart;
   const outletFilter = outlet ? { outletName: outlet } : {};
 
-  // A bill is "touched" by a new payment or by a rejection (so every cashier
-  // screen sees a rejected payer disappear, not just the one that tapped it).
+  // A bill is "touched" by a new payment, a rejection or an acceptance (so every
+  // cashier screen sees it change, not just the one that tapped it).
   const touched = await prisma.benefitTransaction.findMany({
     where: {
       billNo: { not: null },
@@ -142,6 +142,7 @@ cashierRouter.get("/payments", requireCashier, async (req, res) => {
       OR: [
         { status: "confirmed", createdAt: { gt: from } },
         { status: "void", voidedAt: { gt: from } },
+        { status: "confirmed", acceptedAt: { gt: from } },
       ],
     },
     select: { outletName: true, billNo: true },
@@ -186,6 +187,7 @@ cashierRouter.get("/payments", requireCashier, async (req, res) => {
           allowanceAmount,
           cashAmount,
           totalAmount: roundMoney(allowanceAmount + cashAmount),
+          accepted: !!t.acceptedAt,
           createdAt: t.createdAt.toISOString(),
         };
       });

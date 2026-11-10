@@ -151,12 +151,36 @@ adminRouter.post("/employees/:employeeCode/revoke-balance", async (req, res) => 
   const period = await getOrCreatePeriod(prisma, employee.id);
   const revoked = roundMoney(Math.max(0, effectiveAllowance(Number(period.allowance), employee.lastWorkingDay, period.year, period.month) - Number(period.used)));
   const [, sessions] = await prisma.$transaction([
-    prisma.benefitPeriod.update({ where: { id: period.id }, data: { allowance: period.used } }),
+    prisma.benefitPeriod.update({
+      where: { id: period.id },
+      data: {
+        allowance: period.used,
+        revokedAt: new Date(),
+        // Revoking again while already at 0 must not overwrite the real allowance with "used".
+        allowanceBeforeRevoke:
+          Number(period.allowance) > Number(period.used) || period.allowanceBeforeRevoke == null ? period.allowance : period.allowanceBeforeRevoke,
+      },
+    }),
     prisma.session.updateMany({ where: { employeeId: employee.id, revokedAt: null }, data: { revokedAt: new Date() } }),
   ]);
   console.log(`[admin] revoked balance of ${revoked} for ${employee.employeeCode} (${period.year}-${period.month}), signed out ${sessions.count} session(s)`);
   setLog(res, { detail: { revoked, signedOut: sessions.count } });
   res.json({ employeeCode: employee.employeeCode, revoked, remaining: 0, signedOut: sessions.count });
+});
+
+// Gives back a revoked balance: this month's allowance returns to what it was
+// just before the revoke, and Google sign-in works again (auth.ts).
+adminRouter.post("/employees/:employeeCode/undo-revoke", async (req, res) => {
+  const employee = await prisma.employee.findUnique({ where: { employeeCode: req.params.employeeCode }, include: { role: true } });
+  if (!employee) return res.status(404).json({ error: "employee_not_found" });
+  const period = await getOrCreatePeriod(prisma, employee.id);
+  if (!period.revokedAt) return res.status(409).json({ error: "not_revoked" });
+  // Revokes made before allowanceBeforeRevoke existed fall back to the role's monthly allowance.
+  const allowance = roundMoney(Math.max(Number(period.used), Number(period.allowanceBeforeRevoke ?? employee.role.monthlyAllowance)));
+  await prisma.benefitPeriod.update({ where: { id: period.id }, data: { allowance, revokedAt: null, allowanceBeforeRevoke: null } });
+  const remaining = roundMoney(Math.max(0, effectiveAllowance(allowance, employee.lastWorkingDay, period.year, period.month) - Number(period.used)));
+  setLog(res, { detail: { allowance, remaining } });
+  res.json({ employeeCode: employee.employeeCode, allowance, remaining });
 });
 
 // The activity log (lib/eventLog.ts), newest first, never older than EVENT_LOG_DAYS.
@@ -226,6 +250,14 @@ adminRouter.get("/employees/roster-changes", async (_req, res) => {
   const now = new Date();
   const monthStart = new Date(now.getFullYear(), now.getMonth(), 1);
 
+  // Balances revoked this month (same calendar month getOrCreatePeriod uses).
+  const revokedPeriods = await prisma.benefitPeriod.findMany({
+    where: { year: now.getFullYear(), month: now.getMonth() + 1, revokedAt: { not: null } },
+    include: { employee: { select: { employeeCode: true, name: true } } },
+    orderBy: { revokedAt: "desc" },
+  });
+  const revoked = revokedPeriods.map((p) => ({ employeeCode: p.employee.employeeCode, name: p.employee.name, revokedAt: p.revokedAt }));
+
   // If nothing in the table predates this month, there's no genuine "last
   // month's roster" to compare against - every employee only looks like a
   // joiner because the table itself is new (e.g. it was cleared and fully
@@ -236,7 +268,7 @@ adminRouter.get("/employees/roster-changes", async (_req, res) => {
     select: { id: true },
   });
   if (!hasPriorData) {
-    return res.json({ joiners: [], leavers: [] });
+    return res.json({ joiners: [], leavers: [], revoked });
   }
 
   const [joiners, leavers] = await Promise.all([
@@ -253,6 +285,7 @@ adminRouter.get("/employees/roster-changes", async (_req, res) => {
   res.json({
     joiners: joiners.map((e) => ({ employeeCode: e.employeeCode, name: e.name })),
     leavers: leavers.map((e) => ({ employeeCode: e.employeeCode, name: e.name })),
+    revoked,
   });
 });
 
